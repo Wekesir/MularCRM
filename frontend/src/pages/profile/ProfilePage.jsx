@@ -1,0 +1,42 @@
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet } from 'react-router-dom';
+import { useSystemConfig } from '../../context/SystemConfigContext';
+
+const tabs = [
+  { path: '/profile', label: 'Profile', end: true },
+  { path: '/profile/password', label: 'Change Password' },
+];
+
+function ProfilePage() {
+  const { businessName } = useSystemConfig();
+
+  useEffect(() => {
+    document.title = `My Profile | ${businessName}`;
+    return () => {
+      document.title = businessName;
+    };
+  }, [businessName]);
+
+  return (
+    <div className="config-page">
+      <div className="config-tabs">
+        {tabs.map((tab) => (
+          <NavLink
+            key={tab.path}
+            to={tab.path}
+            end={tab.end}
+            className={({ isActive }) =>
+              isActive ? 'config-tab config-tab-active' : 'config-tab'
+            }
+          >
+            {tab.label}
+          </NavLink>
+        ))}
+      </div>
+
+      <Outlet />
+    </div>
+  );
+}
+
+export default ProfilePage;
