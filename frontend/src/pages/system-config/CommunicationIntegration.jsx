@@ -4,12 +4,16 @@ import {
   Mail,
   MessageSquare,
   RefreshCw,
+  Shield,
   Smartphone,
+  UserCheck,
+  UserX,
   Wallet,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LoadingButton from '../../components/LoadingButton';
 import { fetchSmsBalance, sendTestSms } from '../../api/systemConfig';
+import { fetchEmailTemplates, fetchSmsTemplates } from '../../api/templates';
 import {
   CELCOM_AFRICA_SMS,
   SMS_PROVIDER_OPTIONS,
@@ -42,12 +46,26 @@ function CommunicationIntegration() {
   const [testMobile, setTestMobile] = useState('');
   const [testMessage, setTestMessage] = useState(DEFAULT_TEST_MESSAGE);
   const [testingSms, setTestingSms] = useState(false);
+  const [emailTemplates, setEmailTemplates] = useState([]);
+  const [smsTemplates, setSmsTemplates] = useState([]);
 
   useEffect(() => {
     loadConfig()
       .then(setForm)
       .catch(() => toast.error('Failed to load configuration'));
   }, [loadConfig]);
+
+  useEffect(() => {
+    Promise.all([
+      fetchEmailTemplates({ systemOnly: true }).catch(() => []),
+      fetchSmsTemplates({ systemOnly: true }).catch(() => []),
+    ])
+      .then(([emailList, smsList]) => {
+        setEmailTemplates(emailList);
+        setSmsTemplates(smsList);
+      })
+      .catch(() => {});
+  }, []);
 
   const smsProvider = form.sms?.provider || '';
   const isCelcom = smsProvider === CELCOM_AFRICA_SMS.PROVIDER_ID;
@@ -139,6 +157,8 @@ function CommunicationIntegration() {
       const saved = await updateConfig({
         email: form.email,
         sms: form.sms,
+        auth: form.auth,
+        notifications: form.notifications,
       });
       setForm(saved);
       toast.success('Communication settings saved');
@@ -190,6 +210,53 @@ function CommunicationIntegration() {
   return (
     <div className="config-panel communication-panel">
       <div className="communication-sections">
+        <section
+          className="communication-section communication-section--auth"
+          aria-labelledby="comm-auth-title"
+        >
+          <header className="communication-section-header">
+            <div
+              className="communication-section-icon communication-section-icon--email"
+              aria-hidden="true"
+            >
+              <Shield />
+            </div>
+            <div className="communication-section-heading">
+              <div className="communication-section-title-row">
+                <h3 id="comm-auth-title">Login Security</h3>
+                <span
+                  className={`communication-section-badge communication-section-badge--email${
+                    form.auth?.otpOnLogin === false ? ' communication-section-badge--muted' : ''
+                  }`}
+                >
+                  {form.auth?.otpOnLogin === false ? 'Password only' : 'OTP enabled'}
+                </span>
+              </div>
+              <p className="communication-section-desc">
+                Require a one-time code after password sign-in. Disable to let users sign in with
+                email and password only.
+              </p>
+            </div>
+          </header>
+
+          <div className="communication-section-body config-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={form.auth?.otpOnLogin !== false}
+                onChange={(e) => updateField('auth', 'otpOnLogin', e.target.checked)}
+              />
+              Enable OTP on login
+            </label>
+            {form.auth?.otpOnLogin === false && (
+              <p className="config-hint">
+                With OTP disabled, users are signed in immediately after entering valid email and
+                password credentials. Email delivery remains required for password resets.
+              </p>
+            )}
+          </div>
+        </section>
+
         <section className="communication-section communication-section--email" aria-labelledby="comm-email-title">
           <header className="communication-section-header">
             <div className="communication-section-icon communication-section-icon--email" aria-hidden="true">
@@ -521,6 +588,158 @@ function CommunicationIntegration() {
                 </aside>
               </div>
             )}
+          </div>
+        </section>
+
+        <section
+          className="communication-section communication-section--notifications"
+          aria-labelledby="comm-notifications-title"
+        >
+          <header className="communication-section-header">
+            <div
+              className="communication-section-icon communication-section-icon--email"
+              aria-hidden="true"
+            >
+              <UserX />
+            </div>
+            <div className="communication-section-heading">
+              <div className="communication-section-title-row">
+                <h3 id="comm-notifications-title">Account Deleted Notifications</h3>
+              </div>
+              <p className="communication-section-desc">
+                Choose which system-wide templates are sent (email + SMS) when a user is deleted.
+                Edit the templates under Communication &rarr; Channels &rarr; Email / SMS Templates.
+                Leave as &ldquo;Built-in default&rdquo; to use the hardcoded message.
+              </p>
+            </div>
+          </header>
+
+          <div className="communication-section-body config-form">
+            <div className="communication-field-group communication-field-group--grid">
+              <label>
+                Email template
+                <select
+                  value={form.notifications?.accountDeletedEmailTemplateId || ''}
+                  onChange={(e) =>
+                    updateField(
+                      'notifications',
+                      'accountDeletedEmailTemplateId',
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">Built-in default</option>
+                  {emailTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                SMS template
+                <select
+                  value={form.notifications?.accountDeletedSmsTemplateId || ''}
+                  onChange={(e) =>
+                    updateField(
+                      'notifications',
+                      'accountDeletedSmsTemplateId',
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">Built-in default</option>
+                  {smsTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="config-hint">
+              Available variables: <code>{'{{first_name}}'}</code>,{' '}
+              <code>{'{{name}}'}</code>, <code>{'{{business_name}}'}</code>,{' '}
+              <code>{'{{email}}'}</code>.
+            </p>
+          </div>
+        </section>
+
+        <section
+          className="communication-section"
+          aria-labelledby="comm-case-assignment-title"
+        >
+          <header className="communication-section-header">
+            <div
+              className="communication-section-icon communication-section-icon--email"
+              aria-hidden="true"
+            >
+              <UserCheck />
+            </div>
+            <div className="communication-section-heading">
+              <div className="communication-section-title-row">
+                <h3 id="comm-case-assignment-title">Case Assignment Notifications</h3>
+              </div>
+              <p className="communication-section-desc">
+                Choose which system-wide templates are sent (email + SMS) to an agent when case files
+                are assigned, reallocated, or unallocated from them. Edit the templates under
+                Communication &rarr; Channels &rarr; Email / SMS Templates.
+                Leave as &ldquo;Built-in default&rdquo; to use the hardcoded message.
+              </p>
+            </div>
+          </header>
+
+          <div className="communication-section-body config-form">
+            <div className="communication-field-group communication-field-group--grid">
+              <label>
+                Email template
+                <select
+                  value={form.notifications?.caseAssignmentEmailTemplateId || ''}
+                  onChange={(e) =>
+                    updateField(
+                      'notifications',
+                      'caseAssignmentEmailTemplateId',
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">Built-in default</option>
+                  {emailTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                SMS template
+                <select
+                  value={form.notifications?.caseAssignmentSmsTemplateId || ''}
+                  onChange={(e) =>
+                    updateField(
+                      'notifications',
+                      'caseAssignmentSmsTemplateId',
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                >
+                  <option value="">Built-in default</option>
+                  {smsTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <p className="config-hint">
+              Available variables: <code>{'{{first_name}}'}</code>,{' '}
+              <code>{'{{agent_name}}'}</code>, <code>{'{{business_name}}'}</code>,{' '}
+              <code>{'{{case_file_name}}'}</code>, <code>{'{{case_count}}'}</code>,{' '}
+              <code>{'{{performer_name}}'}</code>, <code>{'{{action_label}}'}</code>.
+            </p>
           </div>
         </section>
       </div>

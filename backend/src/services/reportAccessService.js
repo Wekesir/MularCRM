@@ -1,10 +1,7 @@
 const crypto = require('crypto');
 const pool = require('../db/pool');
-const {
-  getUserByEmail,
-  getRoleById,
-  getEffectivePermissions,
-} = require('./accessControlService');
+const { getRoleById, getEffectivePermissions } = require('./accessControlService');
+const { getUserByEmail } = require('./userService');
 
 const UNLOCK_TTL_MS = 8 * 60 * 60 * 1000;
 

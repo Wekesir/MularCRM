@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, LogOut, Menu, Moon, Settings, Sun, UserPen } from 'lucide-react';
+import { ChevronDown, Fingerprint, KeyRound, LogOut, Menu, Moon, Settings, Sun, UserPen } from 'lucide-react';
 import { useSystemConfig } from '../context/SystemConfigContext';
 import { useTheme } from '../context/ThemeContext';
 import { getUserInitials, useUser } from '../context/UserContext';
+import { useAppSelector } from '../store/hooks';
 import {
   NotificationsBellButton,
   NotificationsOffcanvas,
@@ -31,6 +32,7 @@ function UserAvatarButton({ user }) {
 
 function TopBarUserMenu() {
   const { user, logout } = useUser();
+  const isSystemAdmin = useAppSelector((state) => state.auth.isSystemAdmin);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -70,16 +72,34 @@ function TopBarUserMenu() {
             onClick={() => setDropdownOpen(false)}
           >
             <UserPen className="dropdown-item-icon" aria-hidden="true" />
-            Update Profile
+            My Profile
           </Link>
           <Link
-            to="/system-configurations"
+            to="/profile/passkeys"
             className="dropdown-item"
             onClick={() => setDropdownOpen(false)}
           >
-            <Settings className="dropdown-item-icon" aria-hidden="true" />
-            System Settings
+            <Fingerprint className="dropdown-item-icon" aria-hidden="true" />
+            Device Unlock
           </Link>
+          <Link
+            to="/profile/password"
+            className="dropdown-item"
+            onClick={() => setDropdownOpen(false)}
+          >
+            <KeyRound className="dropdown-item-icon" aria-hidden="true" />
+            Change Password
+          </Link>
+          {isSystemAdmin ? (
+            <Link
+              to="/system-configurations"
+              className="dropdown-item"
+              onClick={() => setDropdownOpen(false)}
+            >
+              <Settings className="dropdown-item-icon" aria-hidden="true" />
+              System Settings
+            </Link>
+          ) : null}
           <button
             type="button"
             className="dropdown-item dropdown-item-danger"

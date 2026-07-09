@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   UserRound,
   Plus,
@@ -9,171 +8,41 @@ import {
   XCircle,
   FolderOpen,
   Search,
-  MoreHorizontal,
   Pencil,
   Trash2,
   Eye,
   Upload,
+  Wallet,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import StatCard from '../../components/StatCard';
 import SectionHeader from '../../components/SectionHeader';
 import ClientFormModal from '../../components/ClientFormModal';
 import ClientBulkUploadModal from '../../components/ClientBulkUploadModal';
+import ClientContactModal from '../../components/ClientContactModal';
 import { EMPTY_CLIENT_FORM, BUSINESS_TYPES } from './clientConstants';
 import { usePageActions } from '../../context/PageActionsContext';
 import { usePageHeaderSticky } from '../../context/PageHeaderStickyContext';
+import { useSystemConfig } from '../../context/SystemConfigContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { fetchClients, createClient, updateClient, deleteClient } from '../../api/clients';
 
 const TYPE_LABEL = Object.fromEntries(BUSINESS_TYPES.map((t) => [t.value, t.label]));
 
-const STATUS_META = {
-  active: { label: 'Active', className: 'cm-badge cm-badge-active' },
-  inactive: { label: 'Inactive', className: 'cm-badge cm-badge-inactive' },
-};
-
-function ClientRow({ client, index, onEdit, onDelete }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
-  const triggerRef = useRef(null);
-  const status = STATUS_META[client.status] ?? STATUS_META.inactive;
-
-  const openMenu = () => {
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect();
-      setMenuPos({
-        top: rect.bottom + window.scrollY + 4,
-        left: rect.right + window.scrollX,
-      });
-    }
-    setMenuOpen((o) => !o);
-  };
-
-  const handleDelete = () => {
-    setMenuOpen(false);
-    onDelete(client);
-  };
-
-  const handleEdit = () => {
-    setMenuOpen(false);
-    onEdit(client);
-  };
-
-  // Close menu on outside click or scroll.
-  useEffect(() => {
-    if (!menuOpen) return undefined;
-    const close = () => setMenuOpen(false);
-    document.addEventListener('click', close);
-    document.addEventListener('scroll', close, true);
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('scroll', close, true);
-    };
-  }, [menuOpen]);
-
-  return (
-    <tr className="cm-table-row">
-      <td className="cm-td cm-td-index">{index + 1}</td>
-      <td className="cm-td">
-        <div className="cm-client-name-cell">
-          <span className="cm-client-avatar" aria-hidden="true">
-            <Building2 className="cm-client-avatar-icon" />
-          </span>
-          <div>
-            <p className="cm-client-name">{client.name}</p>
-            <p className="cm-client-type">{TYPE_LABEL[client.businessType] ?? client.businessType}</p>
-          </div>
-        </div>
-      </td>
-      <td className="cm-td cm-td-contact">
-        <p className="cm-contact-phone">{client.phone}</p>
-        <p className="cm-contact-email">{client.email}</p>
-      </td>
-      <td className="cm-td cm-td-num">{client.totalFiles.toLocaleString()}</td>
-      <td className="cm-td cm-td-num">{client.activeCases.toLocaleString()}</td>
-      <td className="cm-td">
-        <span className={status.className}>{status.label}</span>
-      </td>
-      <td className="cm-td cm-td-date">{client.addedAt}</td>
-      <td className="cm-td cm-td-actions">
-        <div className="cm-action-group">
-          <button
-            type="button"
-            className="cm-action-btn cm-action-btn-primary"
-            aria-label="View client"
-            title="View"
-          >
-            <Eye className="cm-action-icon" />
-          </button>
-          <button
-            type="button"
-            className="cm-action-btn"
-            aria-label="Edit client"
-            title="Edit"
-            onClick={handleEdit}
-          >
-            <Pencil className="cm-action-icon" />
-          </button>
-          <button
-            ref={triggerRef}
-            type="button"
-            className={menuOpen ? 'cm-action-btn cm-action-btn-active' : 'cm-action-btn'}
-            aria-label="More options"
-            aria-expanded={menuOpen}
-            title="More"
-            onClick={(e) => { e.stopPropagation(); openMenu(); }}
-          >
-            <MoreHorizontal className="cm-action-icon" />
-          </button>
-        </div>
-
-        {menuOpen && createPortal(
-          <div
-            className="cm-action-menu"
-            role="menu"
-            style={{
-              position: 'absolute',
-              top: menuPos.top,
-              left: menuPos.left,
-              transform: 'translateX(-100%)',
-              zIndex: 9999,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              className="cm-action-menu-item"
-              role="menuitem"
-              onClick={handleEdit}
-            >
-              <Pencil className="cm-action-menu-icon" />
-              Edit Client
-            </button>
-            <button
-              type="button"
-              className="cm-action-menu-item cm-action-menu-item-danger"
-              role="menuitem"
-              onClick={handleDelete}
-            >
-              <Trash2 className="cm-action-menu-icon" />
-              Delete Client
-            </button>
-          </div>,
-          document.body,
-        )}
-      </td>
-    </tr>
-  );
+function formatMoney(value) {
+  const n = Number(value) || 0;
+  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
 function ClientManagementPage() {
   const { setActions } = usePageActions();
   const { headerInView } = usePageHeaderSticky();
   const { confirm } = useConfirm();
+  const { currencySymbol } = useSystemConfig();
   const isDocked = !headerInView;
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const [contactClient, setContactClient] = useState(null);
   const [editingClient, setEditingClient] = useState(null);
   const [form, setForm] = useState(EMPTY_CLIENT_FORM);
   const [isSaving, setIsSaving] = useState(false);
@@ -203,7 +72,7 @@ function ClientManagementPage() {
     total: clients.length,
     active: clients.filter((c) => c.status === 'active').length,
     inactive: clients.filter((c) => c.status === 'inactive').length,
-    totalFiles: clients.reduce((s, c) => s + c.totalFiles, 0),
+    totalFiles: clients.reduce((s, c) => s + (c.totalFiles || 0), 0),
   }), [clients]);
 
   const filtered = useMemo(() => {
@@ -262,9 +131,6 @@ function ClientManagementPage() {
         const created = await createClient(payload);
         setClients((prev) => [created, ...prev]);
 
-        // One summary toast for the onboarding + notification outcome. Both
-        // channels are always attempted independently on the backend — this
-        // just reports what actually happened for each one.
         const n = created.notifications;
         const channels = [];
         const issues = [];
@@ -303,14 +169,14 @@ function ClientManagementPage() {
       title: 'Delete client',
       message: `Are you sure you want to delete "${client.name}"?`,
       detail:
-        'All email and SMS templates linked to this client will also be removed. This action cannot be undone.',
+        'This client will be soft-deleted — they will no longer appear in the client directory, but all their data and linked templates are preserved and can be restored later.',
       confirmText: 'Delete Client',
       confirmLoadingText: 'Deleting…',
       onConfirm: async () => {
         try {
           await deleteClient(client.id);
           setClients((prev) => prev.filter((c) => c.id !== client.id));
-          toast.success(`Client "${client.name}" removed`);
+          toast.success(`Client "${client.name}" deleted`);
         } catch (err) {
           toast.error(err.response?.data?.message || 'Failed to delete client');
           throw err;
@@ -456,23 +322,34 @@ function ClientManagementPage() {
 
           {/* Table */}
           <div className="cm-table-wrap">
-            <table className="cm-table">
+            <table className="cm-table cm-table--wide">
               <thead>
                 <tr>
                   <th className="cm-th cm-th-index">#</th>
                   <th className="cm-th">Client</th>
-                  <th className="cm-th">Contact</th>
-                  <th className="cm-th cm-th-num">Total Files</th>
-                  <th className="cm-th cm-th-num">Active Cases</th>
-                  <th className="cm-th">Status</th>
-                  <th className="cm-th cm-th-date">Date Added</th>
+                  <th className="cm-th">Client Type</th>
+                  <th className="cm-th cm-th-num">Active Files</th>
+                  <th className="cm-th cm-th-num cm-th-money">
+                    Active Value <span className="cm-th-currency">({currencySymbol})</span>
+                  </th>
+                  <th className="cm-th cm-th-num">Closed Files</th>
+                  <th className="cm-th cm-th-num cm-th-money">
+                    Closed Value <span className="cm-th-currency">({currencySymbol})</span>
+                  </th>
+                  <th className="cm-th cm-th-num cm-th-money">
+                    Collected <span className="cm-th-currency">({currencySymbol})</span>
+                  </th>
+                  <th className="cm-th cm-th-num cm-th-money">
+                    Balance <span className="cm-th-currency">({currencySymbol})</span>
+                  </th>
+                  <th className="cm-th cm-th-contact-btn">Contact</th>
                   <th className="cm-th cm-th-actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td className="cm-td cm-td-empty" colSpan={8}>
+                    <td className="cm-td cm-td-empty" colSpan={11}>
                       <div className="cm-empty-state">
                         <Building2 className="cm-empty-icon" aria-hidden="true" />
                         <p className="cm-empty-title">
@@ -490,13 +367,94 @@ function ClientManagementPage() {
                   </tr>
                 ) : (
                   filtered.map((client, idx) => (
-                    <ClientRow
-                      key={client.id}
-                      client={client}
-                      index={idx}
-                      onEdit={openEditModal}
-                      onDelete={handleDelete}
-                    />
+                    <tr key={client.id} className="cm-table-row">
+                      <td className="cm-td cm-td-index">{idx + 1}</td>
+
+                      {/* Client */}
+                      <td className="cm-td">
+                        <div className="cm-client-name-cell">
+                          <span className="cm-client-avatar" aria-hidden="true">
+                            <Building2 className="cm-client-avatar-icon" />
+                          </span>
+                          <div>
+                            <p className="cm-client-name">{client.name}</p>
+                            <p className="cm-client-type">{TYPE_LABEL[client.businessType] ?? client.businessType}</p>
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Client Type */}
+                      <td className="cm-td">
+                        <span className="cm-type-badge">
+                          {TYPE_LABEL[client.businessType] ?? client.businessType}
+                        </span>
+                      </td>
+
+                      {/* Active Files */}
+                      <td className="cm-td cm-td-num">{(client.activeCases || 0).toLocaleString()}</td>
+
+                      {/* Active Value */}
+                      <td className="cm-td cm-td-num cm-money">
+                        {formatMoney(client.activeValue)}
+                      </td>
+
+                      {/* Closed Files */}
+                      <td className="cm-td cm-td-num">{(client.closedFiles || 0).toLocaleString()}</td>
+
+                      {/* Closed Value */}
+                      <td className="cm-td cm-td-num cm-money">
+                        {formatMoney(client.closedValue)}
+                      </td>
+
+                      {/* Collected */}
+                      <td className="cm-td cm-td-num cm-money cm-money--positive">
+                        {formatMoney(client.collected)}
+                      </td>
+
+                      {/* Balance */}
+                      <td className="cm-td cm-td-num cm-money cm-money--balance">
+                        <span className="cm-money-with-icon">
+                          <Wallet className="cm-money-icon" />
+                          {formatMoney(client.balance)}
+                        </span>
+                      </td>
+
+                      {/* View Contact Information */}
+                      <td className="cm-td cm-td-contact-btn">
+                        <button
+                          type="button"
+                          className="cm-contact-btn"
+                          onClick={() => setContactClient(client)}
+                        >
+                          <Eye className="cm-contact-btn-icon" />
+                          <span>View</span>
+                        </button>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="cm-td cm-td-actions">
+                        <div className="cm-action-group">
+                          <button
+                            type="button"
+                            className="cm-action-btn cm-action-btn-primary"
+                            aria-label="Edit client"
+                            title="Edit profile"
+                            onClick={() => openEditModal(client)}
+                          >
+                            <Pencil className="cm-action-icon" />
+                          </button>
+                          <button
+                            type="button"
+                            className="cm-action-btn cm-action-btn-danger"
+                            aria-label="Delete client"
+                            title="Delete client"
+                            onClick={() => handleDelete(client)}
+                          >
+                            <Trash2 className="cm-action-icon" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
                   ))
                 )}
               </tbody>
@@ -519,6 +477,11 @@ function ClientManagementPage() {
         isSaving={isSaving}
         onSave={handleSave}
         isEditing={Boolean(editingClient)}
+      />
+
+      <ClientContactModal
+        client={contactClient}
+        onClose={() => setContactClient(null)}
       />
 
       <ClientBulkUploadModal

@@ -5,7 +5,7 @@ const {
   getUserByEmail,
   getUserById,
   getUserEffectivePermissions,
-} = require('./accessControlService');
+} = require('./userService');
 const { hashPassword, verifyPassword, hashToken } = require('./passwordService');
 const { sendOtpEmail, sendPasswordResetEmail, isEmailConfigured } = require('./emailService');
 const { sendOtpSms } = require('./smsService');
@@ -195,20 +195,46 @@ async function login({ email, password, ip = 'unknown', context = {} }) {
     throw error;
   }
 
-  const emailReady = await isEmailConfigured(await getSystemConfig({ mask: false }));
-  if (!emailReady) {
-    const error = new Error('Email delivery is not configured. Contact your administrator.');
-    error.status = 503;
-    throw error;
+  const config = await getSystemConfig({ mask: false });
+  const otpRequired = config.auth?.otpOnLogin !== false;
+
+  if (otpRequired) {
+    const emailReady = await isEmailConfigured(config);
+    if (!emailReady) {
+      const error = new Error('Email delivery is not configured. Contact your administrator.');
+      error.status = 503;
+      throw error;
+    }
+
+    const { challengeId, code } = await createOtpChallenge(row.id);
+    const { smsSent } = await deliverOtp(row, code);
+
+    return {
+      challengeId,
+      maskedEmail: maskEmail(row.email),
+      smsSent,
+      otpRequired: true,
+    };
   }
 
-  const { challengeId, code } = await createOtpChallenge(row.id);
-  const { smsSent } = await deliverOtp(row, code);
+  const user = buildAuthUser(row);
+  const session = signSessionToken(user);
+  const permissions = await getUserEffectivePermissions(user.id);
+
+  await recordLoginEvent({
+    userId: user.id,
+    email: user.email,
+    sessionId: session.sessionId,
+    status: 'success',
+    context: auditContext,
+  });
 
   return {
-    challengeId,
-    maskedEmail: maskEmail(row.email),
-    smsSent,
+    ...session,
+    user,
+    permissions,
+    isSystemAdmin: user.isSystemAdmin,
+    otpRequired: false,
   };
 }
 

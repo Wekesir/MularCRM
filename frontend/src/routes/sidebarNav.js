@@ -3,6 +3,7 @@
 //   { type: 'dropdown', key, label, children: [{path,label}] } — a collapsible group (no own page)
 export const sidebarNav = [
   { type: 'link', path: '/dashboard', label: 'Dashboard' },
+  { type: 'link', path: '/users', label: 'Users' },
   {
     type: 'dropdown',
     key: 'management',

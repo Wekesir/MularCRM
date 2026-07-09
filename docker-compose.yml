@@ -53,6 +53,8 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
       JWT_SECRET: ${JWT_SECRET:-omnicrm-dev-jwt-secret-change-me}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}
+      WEBAUTHN_RP_NAME: ${WEBAUTHN_RP_NAME:-OMNICRM}
       AUTH_SESSION_TIMEZONE: ${AUTH_SESSION_TIMEZONE:-Africa/Nairobi}
       REPORT_UNLOCK_SECRET: ${REPORT_UNLOCK_SECRET:-change-me-in-production}
       RESEND_API_KEY: ${RESEND_API_KEY:-}

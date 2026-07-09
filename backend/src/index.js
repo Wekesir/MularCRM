@@ -38,14 +38,28 @@ app.get('/api', (_req, res) => {
 app.use('/api/system-config', systemConfigRouter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/access', accessControlRouter);
+app.use('/api/users', require('./routes/users'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/audit', require('./routes/audit'));
 app.use('/api/sms-logs', require('./routes/smsLogs'));
 app.use('/api/email-logs', require('./routes/emailLogs'));
 app.use('/api/clients', require('./routes/clients'));
+app.use('/api/debtors', require('./routes/debtors'));
+app.use('/api/closed-files', require('./routes/closedFiles'));
+app.use('/api/case-management', require('./routes/caseManagement'));
+app.use('/api/debt-categories', require('./routes/debtCategories'));
+app.use('/api/debt-types', require('./routes/debtTypes'));
+app.use('/api/currencies', require('./routes/currencies'));
+app.use('/api/contact-statuses', require('./routes/contactStatuses'));
+app.use('/api/agents', require('./routes/agents'));
+app.use('/api/agent-experience-levels', require('./routes/agentExperienceLevels'));
+app.use('/api/agent-expertise-areas', require('./routes/agentExpertiseAreas'));
 app.use('/api/template-variables', require('./routes/templateVariables'));
 app.use('/api/templates', require('./routes/templates'));
+app.use('/api/payments', require('./routes/payments'));
+app.use('/api/commissions', require('./routes/commissions'));
+app.use('/api/client-commission-rates', require('./routes/clientCommissionRates'));
 
 async function start() {
   try {

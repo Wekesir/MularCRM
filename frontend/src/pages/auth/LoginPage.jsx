@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Mail, Shield } from 'lucide-react';
+import { ArrowRight, Fingerprint, Mail, Shield } from 'lucide-react';
 import { toast } from 'react-toastify';
 import AuthFormField from '../../components/auth/AuthFormField';
 import LoadingButton from '../../components/LoadingButton';
-import { login } from '../../store/slices/authSlice';
+import { login, loginWithPasskey } from '../../store/slices/authSlice';
 import { useAppDispatch } from '../../store/hooks';
 
 const OTP_SESSION_KEY = 'omnicrm-otp-challenge';
@@ -26,11 +26,17 @@ export function clearOtpChallenge() {
   sessionStorage.removeItem(OTP_SESSION_KEY);
 }
 
+function browserSupportsPasskeys() {
+  return typeof window !== 'undefined' && window.PublicKeyCredential != null;
+}
+
 function LoginPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [passkeySubmitting, setPasskeySubmitting] = useState(false);
+  const passkeysSupported = browserSupportsPasskeys();
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -39,6 +45,13 @@ function LoginPage() {
       const result = await dispatch(
         login({ email: form.email.trim(), password: form.password })
       ).unwrap();
+
+      if (result?.token) {
+        clearOtpChallenge();
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+
       setOtpChallenge({
         challengeId: result.challengeId,
         maskedEmail: result.maskedEmail,
@@ -50,6 +63,31 @@ function LoginPage() {
       toast.error(message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handlePasskeySignIn = async () => {
+    if (!passkeysSupported) {
+      toast.error('This device does not support fingerprint / passkey unlock.');
+      return;
+    }
+
+    const email = form.email.trim();
+    if (!email) {
+      toast.error('Enter your email, then click Sign in with fingerprint.');
+      return;
+    }
+
+    setPasskeySubmitting(true);
+    try {
+      await dispatch(loginWithPasskey({ email })).unwrap();
+      clearOtpChallenge();
+      navigate('/dashboard', { replace: true });
+    } catch (error) {
+      const message = typeof error === 'string' ? error : error?.message || 'Passkey sign-in failed';
+      toast.error(message);
+    } finally {
+      setPasskeySubmitting(false);
     }
   };
 
@@ -74,7 +112,7 @@ function LoginPage() {
           icon={Mail}
           value={form.email}
           onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-          autoComplete="email"
+          autoComplete="email username webauthn"
           placeholder="you@company.com"
           required
         />
@@ -100,11 +138,37 @@ function LoginPage() {
           className="btn-primary auth-submit auth-submit-modern"
           loading={submitting}
           loadingText="Signing in..."
+          disabled={passkeySubmitting}
           trailingIcon={<ArrowRight className="auth-submit-icon" aria-hidden="true" />}
         >
           Continue to verification
         </LoadingButton>
       </form>
+
+      {passkeysSupported ? (
+        <>
+          <div className="auth-divider" role="separator">
+            <span>or</span>
+          </div>
+          <LoadingButton
+            type="button"
+            className="btn-secondary auth-passkey-btn"
+            loading={passkeySubmitting}
+            loadingText="Waiting for device..."
+            disabled={submitting}
+            onClick={handlePasskeySignIn}
+          >
+            <Fingerprint className="icon-sm" aria-hidden="true" />
+            Sign in with fingerprint
+          </LoadingButton>
+          <p className="auth-passkey-hint">
+            Enter your email, then click Sign in with fingerprint. If Chrome asks for a Google PIN,
+            the passkey is still in Google Password Manager — remove it under Chrome → Password
+            Manager → Passkeys for localhost, then re-register under Profile → Device Unlock and
+            choose this device. On Linux, Chrome often cannot use the laptop fingerprint sensor.
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

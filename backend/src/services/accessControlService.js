@@ -36,23 +36,6 @@ function normalizeRole(row) {
   };
 }
 
-function normalizeUser(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    phone: row.phone || null,
-    roleId: row.role_id,
-    roleName: row.role_name,
-    isSystemAdmin: Boolean(row.is_system_admin),
-    permissionOverrides: parseJson(row.permission_overrides, null),
-    isActive: Boolean(row.is_active),
-    mustResetPassword: Boolean(row.must_reset_password),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
 function getEffectivePermissions(role, overrides = null) {
   if (role.isSystemAdmin) {
     return buildFullPermissions();
@@ -142,175 +125,6 @@ async function deleteRole(id) {
   return { success: true };
 }
 
-async function listUsers() {
-  const [rows] = await pool.query(`
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-    ORDER BY u.name ASC
-  `);
-
-  return rows.map(normalizeUser);
-}
-
-async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '' } = {}) {
-  const searchValue = search.trim();
-  const baseFrom = `
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-  `;
-  const whereClause = searchValue
-    ? ' WHERE u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ?'
-    : '';
-  const searchParams = searchValue
-    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
-    : [];
-
-  const [countAllRows] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom}`);
-  const countFilteredRows = searchValue
-    ? (
-        await pool.query(`SELECT COUNT(*) AS total ${baseFrom}${whereClause}`, searchParams)
-      )[0]
-    : countAllRows;
-
-  const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin ${baseFrom}${whereClause} ORDER BY u.name ASC LIMIT ? OFFSET ?`,
-    [...searchParams, Number(length), Number(start)]
-  );
-
-  return {
-    draw: Number(draw),
-    recordsTotal: Number(countAllRows[0]?.total ?? 0),
-    recordsFiltered: Number(countFilteredRows[0]?.total ?? 0),
-    data: rows.map(normalizeUser),
-  };
-}
-
-async function getUserById(id) {
-  const [rows] = await pool.query(`
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-    WHERE u.id = ?
-  `, [id]);
-
-  return rows.length ? normalizeUser(rows[0]) : null;
-}
-
-async function getUserByEmail(email) {
-  const [rows] = await pool.query(
-    `
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-    WHERE u.email = ?
-    LIMIT 1
-  `,
-    [email]
-  );
-
-  return rows.length ? normalizeUser(rows[0]) : null;
-}
-
-async function createUser({
-  name,
-  email,
-  roleId,
-  permissionOverrides,
-  isActive = true,
-  phone = null,
-  password = null,
-}) {
-  const { hashPassword } = require('./passwordService');
-  const passwordHash = password ? hashPassword(password) : null;
-  const mustResetPassword = Boolean(password);
-
-  const [result] = await pool.query(
-    `INSERT INTO users (name, email, role_id, permission_overrides, is_active, phone, password_hash, must_reset_password)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      name,
-      email,
-      roleId,
-      permissionOverrides ? JSON.stringify(permissionOverrides) : null,
-      isActive,
-      phone || null,
-      passwordHash,
-      mustResetPassword,
-    ]
-  );
-
-  return getUserById(result.insertId);
-}
-
-async function updateUser(
-  id,
-  { name, email, roleId, permissionOverrides, isActive, phone, password }
-) {
-  const user = await getUserById(id);
-  if (!user) return null;
-
-  const { hashPassword } = require('./passwordService');
-  let passwordHash = undefined;
-  let mustResetPassword = undefined;
-
-  if (password) {
-    passwordHash = hashPassword(password);
-    mustResetPassword = true;
-  }
-
-  await pool.query(
-    `UPDATE users SET
-      name = ?,
-      email = ?,
-      role_id = ?,
-      permission_overrides = ?,
-      is_active = ?,
-      phone = ?,
-      password_hash = COALESCE(?, password_hash),
-      must_reset_password = COALESCE(?, must_reset_password)
-     WHERE id = ?`,
-    [
-      name ?? user.name,
-      email ?? user.email,
-      roleId ?? user.roleId,
-      permissionOverrides !== undefined
-        ? permissionOverrides
-          ? JSON.stringify(permissionOverrides)
-          : null
-        : user.permissionOverrides
-          ? JSON.stringify(user.permissionOverrides)
-          : null,
-      isActive ?? user.isActive,
-      phone !== undefined ? phone || null : user.phone,
-      passwordHash ?? null,
-      mustResetPassword ?? null,
-      id,
-    ]
-  );
-
-  return getUserById(id);
-}
-
-async function deleteUser(id) {
-  const user = await getUserById(id);
-  if (!user) return { error: 'User not found' };
-
-  await pool.query('DELETE FROM users WHERE id = ?', [id]);
-  return { success: true };
-}
-
-async function getUserEffectivePermissions(userId) {
-  const user = await getUserById(userId);
-  if (!user) return null;
-
-  const role = await getRoleById(user.roleId);
-  return getEffectivePermissions(
-    { isSystemAdmin: role.isSystemAdmin, permissions: role.permissions },
-    user.permissionOverrides
-  );
-}
-
 module.exports = {
   getPermissionRegistry,
   listRoles,
@@ -319,15 +133,8 @@ module.exports = {
   createRole,
   updateRole,
   deleteRole,
-  listUsers,
-  listUsersPaginated,
-  getUserById,
-  getUserByEmail,
-  createUser,
-  updateUser,
-  deleteUser,
   getEffectivePermissions,
-  getUserEffectivePermissions,
   buildEmptyPermissions,
   buildFullPermissions,
 };
+

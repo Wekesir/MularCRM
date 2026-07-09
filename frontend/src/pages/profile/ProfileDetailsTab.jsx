@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { toast } from 'react-toastify';
+import { Link } from 'react-router-dom';
+import { Fingerprint, KeyRound } from 'lucide-react';
 import LoadingButton from '../../components/LoadingButton';
 import { useUser } from '../../context/UserContext';
 
@@ -60,6 +61,32 @@ function ProfileDetailsTab() {
           </LoadingButton>
         </div>
       </form>
+
+      <div className="profile-security-links">
+        <h3 className="profile-security-links-title">Account security</h3>
+        <div className="profile-security-links-grid">
+          <Link to="/profile/passkeys" className="profile-security-link-card">
+            <span className="profile-security-link-icon">
+              <Fingerprint className="icon-sm" aria-hidden="true" />
+            </span>
+            <span>
+              <span className="profile-security-link-label">Device Unlock</span>
+              <span className="profile-security-link-desc">
+                Set up fingerprint, Face ID, or Windows Hello for faster sign-in
+              </span>
+            </span>
+          </Link>
+          <Link to="/profile/password" className="profile-security-link-card">
+            <span className="profile-security-link-icon">
+              <KeyRound className="icon-sm" aria-hidden="true" />
+            </span>
+            <span>
+              <span className="profile-security-link-label">Change Password</span>
+              <span className="profile-security-link-desc">Update the password for this account</span>
+            </span>
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

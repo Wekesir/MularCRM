@@ -232,6 +232,8 @@ You will be prompted to change this password after first sign-in. Configure **Co
 
 **Password reset:** `/forgot-password` sends a reset link when the email exists. `/reset-password?token=...` sets a new password.
 
+**Device unlock (passkeys):** After signing in, open **Profile → Device Unlock** to register a local platform authenticator. Prefer **this device** if Chrome offers Google Password Manager — synced Google passkeys unlock with a Google PIN, not the laptop fingerprint. On many Linux + Chrome setups the browser cannot use `fprintd` for WebAuthn, so fingerprint may be unavailable even when OS login uses it; password + OTP remains the fallback. On the login page, enter your email and use **Sign in with fingerprint**. Requires HTTPS in production; `localhost` works for development. Optional env: `WEBAUTHN_RP_ID`, `WEBAUTHN_RP_NAME` (defaults from `FRONTEND_URL`).
+
 ## CRM modules
 
 The frontend includes 13 module pages (sidebar navigation). Visiting `/` redirects to `/dashboard` when signed in.
@@ -256,6 +258,24 @@ docker compose down -v
 # Rebuild after dependency changes
 docker compose up -d --build
 ```
+
+## CI / GHCR
+
+Pushes to `master` run [`.github/workflows/ci-ghcr.yml`](.github/workflows/ci-ghcr.yml):
+
+1. **Lint** — runs `npm run lint` in `frontend` and `backend` when those scripts exist; otherwise skips (stub).
+2. **Build and push** — builds production images from `Dockerfile.prod` and pushes them to GitHub Container Registry.
+
+| Image | Tags |
+|-------|------|
+| `ghcr.io/<owner>/<repo>/backend` | `latest`, short commit SHA |
+| `ghcr.io/<owner>/<repo>/frontend` | `latest`, short commit SHA |
+
+The workflow uses the default `GITHUB_TOKEN` with `packages: write`. After the first push, open the package under **GitHub → Packages** if you want to change visibility (e.g. public).
+
+Optional: set a repository variable `VITE_API_URL` so the frontend production image bakes in your API base URL at build time.
+
+Local `docker compose` still uses the development `Dockerfile`s; production images are for registry/deploy use only.
 
 ## Backend middleware
 

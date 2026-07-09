@@ -5,6 +5,11 @@ export const moduleMeta = {
       'Real-time monitoring of collections, agent performance, and financial KPIs.',
   },
 
+  users: {
+    title: 'Users',
+    description: 'Manage system users, roles, and access. Soft-deleted users can be restored.',
+  },
+
   client_management: {
     title: 'Client Management',
     description: 'Maintain client profiles, contracts, and account details.',
@@ -55,11 +60,11 @@ export const moduleMeta = {
 
   payments: {
     title: 'Payments',
-    description: 'Process and review payments received against outstanding debts.',
+    description: 'Payments detected from daily debtor portfolio uploads.',
   },
   commissions: {
     title: 'Commissions',
-    description: 'Track commission calculations and payouts for agents.',
+    description: 'Commission earned from clients on collected amounts.',
   },
   ptp: {
     title: 'PTP (Promise to Pay)',
@@ -121,7 +126,7 @@ export const moduleMeta = {
 
   commission_rates: {
     title: 'Commission Rates',
-    description: 'Configure commission rate rules applied to agents.',
+    description: 'Set the commission rate negotiated with each client per debt category.',
   },
   debt_type: {
     title: 'Debt Type',
@@ -195,12 +200,13 @@ export const moduleMeta = {
   },
   profile: {
     title: 'My Profile',
-    description: 'Update your account details and change your password.',
+    description: 'Update your account details, password, and device unlock settings.',
   },
 };
 
 export const pathToModuleKey = {
   '/dashboard': 'dashboard',
+  '/users': 'users',
 
   '/management/client-management': 'client_management',
   '/management/debtor-management': 'debtor_management',
@@ -255,6 +261,7 @@ export const pathToModuleKey = {
 
   '/profile': 'profile',
   '/profile/password': 'profile',
+  '/profile/passkeys': 'profile',
 
   '/system-configurations': 'system_configurations',
   '/system-configurations/business': 'system_configurations',
@@ -272,6 +279,10 @@ export function getModuleMeta(pathname) {
 
   if (pathname.startsWith('/system-configurations')) {
     return moduleMeta.system_configurations;
+  }
+
+  if (pathname.startsWith('/case-management')) {
+    return moduleMeta.case_management;
   }
 
   if (pathname.startsWith('/communication/communication-channels')) {

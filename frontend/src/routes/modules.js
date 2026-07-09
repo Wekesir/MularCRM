@@ -1,5 +1,8 @@
 import Dashboard from '../pages/Dashboard';
 
+// Users
+import UsersPage from '../pages/users/UsersPage';
+
 // Management
 import ClientManagementPage from '../pages/management/ClientManagementPage';
 import DebtorManagementPage from '../pages/management/DebtorManagementPage';
@@ -9,6 +12,8 @@ import AgentManagementPage from '../pages/management/AgentManagementPage';
 
 // Case Management
 import CaseManagementPage from '../pages/CaseManagementPage';
+import ClientFilesPage from '../pages/ClientFilesPage';
+import FileCasesPage from '../pages/case-management/FileCasesPage.jsx';
 
 // Communication
 import BulkSmsPage from '../pages/communication/BulkSmsPage';
@@ -60,6 +65,8 @@ import ContactStatusPage from '../pages/settings/ContactStatusPage';
 export const modules = [
   { path: '/dashboard', label: 'Dashboard', component: Dashboard },
 
+  { path: '/users', label: 'Users', component: UsersPage },
+
   { path: '/management/client-management', label: 'Client Management', component: ClientManagementPage },
   { path: '/management/debtor-management', label: 'Debtor Management', component: DebtorManagementPage },
   { path: '/management/file-management', label: 'File Management', component: FileManagementPage },
@@ -67,6 +74,8 @@ export const modules = [
   { path: '/management/agent-management', label: 'Agent Management', component: AgentManagementPage },
 
   { path: '/case-management', label: 'Case Management', component: CaseManagementPage },
+  { path: '/case-management/clients/:clientId/files', label: 'Client Files', component: ClientFilesPage, hidden: true },
+  { path: '/case-management/clients/:clientId/files/:fileId/cases', label: 'File Cases', component: FileCasesPage, hidden: true },
 
   { path: '/communication/bulk-sms', label: 'Bulk SMS', component: BulkSmsPage },
   { path: '/communication/bulk-emails', label: 'Bulk Emails', component: BulkEmailsPage },

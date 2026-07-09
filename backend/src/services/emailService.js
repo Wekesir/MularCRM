@@ -2,6 +2,8 @@ const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
 const { getSystemConfig } = require('./systemConfigService');
 const { recordEmailEvent } = require('./auditService');
+const { getEmailTemplateById } = require('./templateService');
+const { renderTemplate } = require('./templateVariableService');
 
 // Hostinger's standard outgoing mail settings. Only host/port/secure are fixed;
 // the user supplies the account username + password so they can switch accounts.
@@ -261,6 +263,87 @@ async function sendOtpEmail({ to, code, expiresMinutes = 10, userId = null }) {
   });
 }
 
+function buildAccountDeletedEmailHtml({ businessName, name }) {
+  const greetingName = name ? name.split(' ')[0] : 'there';
+  return `
+    <div style="font-family: system-ui, -apple-system, sans-serif; max-width: 480px; margin: 0 auto; color: #111;">
+      <h2 style="color: #111;">${greetingName}, your ${businessName} access has been removed</h2>
+      <p>This is to inform you that your user account on the ${businessName} platform has been deleted by an administrator. You can no longer sign in or access the platform.</p>
+      <p style="background: #f5f6f8; border: 1px solid #e3e6ea; border-radius: 10px; padding: 14px 18px; color: #666; font-size: 14px;">
+        If you believe this was done in error, please contact your administrator.
+      </p>
+      <p style="color: #666; font-size: 13px;">This is an automated notification. Please do not reply to this email.</p>
+    </div>
+  `;
+}
+
+async function sendAccountDeletedEmail({
+  to,
+  name,
+  userId = null,
+  templateId = null,
+  values = {},
+}) {
+  const config = await getSystemConfig({ mask: false });
+  const businessName = config.business?.name || 'OMNICRM';
+  const firstName = name ? name.split(' ')[0] : 'there';
+  const renderValues = {
+    name,
+    first_name: firstName,
+    business_name: businessName,
+    email: to,
+    ...values,
+  };
+
+  let subject = `Your ${businessName} access has been removed`;
+  let html = buildAccountDeletedEmailHtml({ businessName, name });
+  let text =
+    `Hi ${firstName},\n\n` +
+    `Your user account on the ${businessName} platform has been deleted by an administrator. ` +
+    `You can no longer sign in or access the platform.\n\n` +
+    `If you believe this was done in error, please contact your administrator.\n\n` +
+    `This is an automated notification. Please do not reply to this email.`;
+
+  if (templateId) {
+    try {
+      const template = await getEmailTemplateById(templateId);
+      if (template && template.body) {
+        subject = renderTemplate(template.subject || subject, renderValues);
+        html = renderTemplate(template.body, renderValues);
+        text = stripHtml(html);
+      }
+    } catch (error) {
+      console.warn('[emailService] Failed to load account-deleted template:', error.message);
+    }
+  }
+
+  return sendEmail({
+    to,
+    subject,
+    html,
+    text,
+    category: 'account_deleted',
+    userId,
+  });
+}
+
+// Minimal HTML → plain-text conversion for the non-HTML email fallback.
+function stripHtml(html) {
+  if (!html) return '';
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 async function sendPasswordResetEmail({ to, token, userId = null }) {
   const config = await getSystemConfig({ mask: false });
   const businessName = config.business?.name || 'OMNICRM';
@@ -478,5 +561,6 @@ module.exports = {
   sendPasswordResetEmail,
   sendWelcomeEmail,
   sendClientOnboardingEmail,
+  sendAccountDeletedEmail,
   isEmailConfigured,
 };

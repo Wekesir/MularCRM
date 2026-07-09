@@ -23,6 +23,8 @@ export function useSystemConfig() {
     businessName: config.business?.name || 'OMNICRM',
     businessLogo: config.business?.logo || '',
     themeColor: config.theme?.color || '#3b82f6',
+    currencyCode: config.business?.currency?.code || 'KES',
+    currencySymbol: config.business?.currency?.symbol || 'KSh',
   };
 }
 

@@ -9,7 +9,10 @@ import {
   resetPasswordRequest,
   resendOtpRequest,
   verifyOtpRequest,
+  webauthnAuthenticateOptionsRequest,
+  webauthnAuthenticateVerifyRequest,
 } from '../../api/auth';
+import { startAuthentication } from '@simplewebauthn/browser';
 import { fetchUserPermissions } from '../../api/reports';
 
 const emptyUser = {
@@ -92,6 +95,24 @@ export const changePassword = createAsyncThunk(
       return await changePasswordRequest(currentPassword, newPassword);
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || 'Password change failed');
+    }
+  }
+);
+
+export const loginWithPasskey = createAsyncThunk(
+  'auth/loginWithPasskey',
+  async ({ email } = {}, { rejectWithValue }) => {
+    try {
+      const options = await webauthnAuthenticateOptionsRequest(email);
+      const assertion = await startAuthentication({ optionsJSON: options });
+      return await webauthnAuthenticateVerifyRequest(assertion);
+    } catch (error) {
+      if (error?.name === 'NotAllowedError') {
+        return rejectWithValue('Passkey sign-in was cancelled or timed out');
+      }
+      return rejectWithValue(
+        error.response?.data?.message || error?.message || 'Passkey sign-in failed'
+      );
     }
   }
 );
@@ -211,8 +232,11 @@ const authSlice = createSlice({
         state.authLoading = true;
         state.authError = null;
       })
-      .addCase(login.fulfilled, (state) => {
+      .addCase(login.fulfilled, (state, action) => {
         state.authLoading = false;
+        if (action.payload?.token) {
+          applyAuthSuccess(state, action.payload);
+        }
       })
       .addCase(login.rejected, (state, action) => {
         state.authLoading = false;
@@ -229,6 +253,20 @@ const authSlice = createSlice({
       .addCase(verifyOtp.rejected, (state, action) => {
         state.authLoading = false;
         state.authError = action.payload || action.error.message || 'Verification failed';
+      })
+      .addCase(loginWithPasskey.pending, (state) => {
+        state.authLoading = true;
+        state.authError = null;
+      })
+      .addCase(loginWithPasskey.fulfilled, (state, action) => {
+        state.authLoading = false;
+        if (action.payload?.token) {
+          applyAuthSuccess(state, action.payload);
+        }
+      })
+      .addCase(loginWithPasskey.rejected, (state, action) => {
+        state.authLoading = false;
+        state.authError = action.payload || action.error.message || 'Passkey sign-in failed';
       })
       .addCase(bootstrapSession.fulfilled, (state, action) => {
         if (!action.payload) return;

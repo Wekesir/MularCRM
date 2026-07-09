@@ -1,6 +1,8 @@
 const { getSystemConfig } = require('./systemConfigService');
 const { CELCOM_AFRICA_SMS } = require('../config/celcomAfricaSms');
 const { recordSmsEvent } = require('./auditService');
+const { getSmsTemplateById } = require('./templateService');
+const { renderTemplate } = require('./templateVariableService');
 
 function normalizeMobileNumber(mobile) {
   const digits = String(mobile || '').replace(/\D/g, '');
@@ -289,6 +291,44 @@ async function sendWelcomeSms({ to, businessName = 'OMNICRM', userId = null }) {
   });
 }
 
+async function sendAccountDeletedSms({
+  to,
+  businessName = 'OMNICRM',
+  name = null,
+  userId = null,
+  templateId = null,
+  values = {},
+}) {
+  const firstName = name ? name.split(' ')[0] : 'there';
+  const renderValues = {
+    name,
+    first_name: firstName,
+    business_name: businessName,
+    email: null,
+    ...values,
+  };
+
+  let message = `Your access to ${businessName} has been removed. Contact your administrator if you believe this is an error.`;
+
+  if (templateId) {
+    try {
+      const template = await getSmsTemplateById(templateId);
+      if (template && template.body) {
+        message = renderTemplate(template.body, renderValues);
+      }
+    } catch (error) {
+      console.warn('[smsService] Failed to load account-deleted template:', error.message);
+    }
+  }
+
+  return sendSms({
+    to,
+    message,
+    category: 'account_deleted',
+    userId,
+  });
+}
+
 async function sendClientOnboardingSms({ to, clientName, platformName = 'OMNICRM', supportPhone = '', supportEmail = '', userId = null }) {
   const supportLine = supportPhone ? ` Call us on ${supportPhone}.` : (supportEmail ? ` Email ${supportEmail}.` : '');
   const message =
@@ -302,6 +342,7 @@ module.exports = {
   sendSms,
   sendOtpSms,
   sendWelcomeSms,
+  sendAccountDeletedSms,
   sendClientOnboardingSms,
   sendTestSms,
   getSmsBalance,

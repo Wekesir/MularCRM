@@ -106,4 +106,5 @@ export const emptyConfig = {
     secure: false,
   },
   sms: { ...CELCOM_AFRICA_SMS.DEFAULT_SMS_CONFIG, provider: '' },
+  auth: { otpOnLogin: true },
 };

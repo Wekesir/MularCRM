@@ -36,6 +36,7 @@ api.interceptors.response.use(
       '/api/auth/resend-otp',
       '/api/auth/forgot-password',
       '/api/auth/reset-password',
+      '/api/auth/webauthn/authenticate',
     ];
     const isPublicAuth = publicAuthPaths.some((path) => url.includes(path));
 

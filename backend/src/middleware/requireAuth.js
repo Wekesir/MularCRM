@@ -1,5 +1,5 @@
 const { verifySessionToken } = require('../services/authService');
-const { getUserById } = require('../services/accessControlService');
+const { getUserById } = require('../services/userService');
 
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
@@ -15,7 +15,7 @@ async function requireAuth(req, res, next) {
   }
 
   const user = await getUserById(payload.userId);
-  if (!user || !user.isActive) {
+  if (!user || !user.isActive || user.deletedAt) {
     return res.status(401).json({ message: 'Invalid or expired session' });
   }
 

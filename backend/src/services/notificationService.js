@@ -87,9 +87,26 @@ async function markAllNotificationsRead(email) {
   return result.affectedRows;
 }
 
+async function createNotification({ userId, title, message, type = 'info' }) {
+  if (!userId) return null;
+  const safeTitle = String(title || '').slice(0, 255);
+  const safeMessage = String(message || '');
+  if (!safeTitle && !safeMessage) return null;
+
+  const allowedTypes = ['info', 'success', 'warning'];
+  const safeType = allowedTypes.includes(type) ? type : 'info';
+
+  const [result] = await pool.query(
+    'INSERT INTO notifications (user_id, title, message, type) VALUES (?, ?, ?, ?)',
+    [userId, safeTitle || null, safeMessage, safeType]
+  );
+  return { id: result.insertId, userId, title: safeTitle, message: safeMessage, type: safeType };
+}
+
 module.exports = {
   getUnreadCount,
   listNotificationsPaginated,
   markNotificationRead,
   markAllNotificationsRead,
+  createNotification,
 };

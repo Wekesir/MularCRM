@@ -1,5 +1,10 @@
 const pool = require('../db/pool');
 
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
 function normalizeClient(row) {
   return {
     id: row.id,
@@ -10,6 +15,12 @@ function normalizeClient(row) {
     status: row.status,
     totalFiles: row.total_files,
     activeCases: row.active_cases,
+    closedFiles: row.closed_files,
+    activeValue: toNumber(row.active_value),
+    closedValue: toNumber(row.closed_value),
+    collected: toNumber(row.collected),
+    balance: toNumber(row.balance),
+    deletedAt: row.deleted_at || null,
     addedAt: row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -17,7 +28,9 @@ function normalizeClient(row) {
 }
 
 async function listClients() {
-  const [rows] = await pool.query('SELECT * FROM clients ORDER BY created_at DESC, id DESC');
+  const [rows] = await pool.query(
+    'SELECT * FROM clients WHERE deleted_at IS NULL ORDER BY created_at DESC, id DESC'
+  );
   return rows.map(normalizeClient);
 }
 
@@ -73,8 +86,9 @@ async function createClient(data) {
 
   const status = data.status === 'inactive' ? 'inactive' : 'active';
   const [result] = await pool.query(
-    `INSERT INTO clients (name, business_type, phone, email, status, total_files, active_cases)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO clients (name, business_type, phone, email, status, total_files, active_cases,
+        closed_files, active_value, closed_value, collected, balance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       String(data.name).trim(),
       String(data.businessType).trim(),
@@ -83,6 +97,11 @@ async function createClient(data) {
       status,
       Number(data.totalFiles) || 0,
       Number(data.activeCases) || 0,
+      Number(data.closedFiles) || 0,
+      toNumber(data.activeValue),
+      toNumber(data.closedValue),
+      toNumber(data.collected),
+      toNumber(data.balance),
     ]
   );
 
@@ -110,6 +129,11 @@ async function updateClient(id, data) {
     status: data.status !== undefined ? (data.status === 'inactive' ? 'inactive' : 'active') : existing.status,
     totalFiles: data.totalFiles !== undefined ? Number(data.totalFiles) || 0 : existing.totalFiles,
     activeCases: data.activeCases !== undefined ? Number(data.activeCases) || 0 : existing.activeCases,
+    closedFiles: data.closedFiles !== undefined ? Number(data.closedFiles) || 0 : existing.closedFiles,
+    activeValue: data.activeValue !== undefined ? toNumber(data.activeValue) : existing.activeValue,
+    closedValue: data.closedValue !== undefined ? toNumber(data.closedValue) : existing.closedValue,
+    collected: data.collected !== undefined ? toNumber(data.collected) : existing.collected,
+    balance: data.balance !== undefined ? toNumber(data.balance) : existing.balance,
   };
 
   if (merged.email !== existing.email) {
@@ -123,7 +147,9 @@ async function updateClient(id, data) {
 
   await pool.query(
     `UPDATE clients
-     SET name = ?, business_type = ?, phone = ?, email = ?, status = ?, total_files = ?, active_cases = ?
+     SET name = ?, business_type = ?, phone = ?, email = ?, status = ?,
+         total_files = ?, active_cases = ?, closed_files = ?,
+         active_value = ?, closed_value = ?, collected = ?, balance = ?
      WHERE id = ?`,
     [
       merged.name,
@@ -133,6 +159,11 @@ async function updateClient(id, data) {
       merged.status,
       merged.totalFiles,
       merged.activeCases,
+      merged.closedFiles,
+      merged.activeValue,
+      merged.closedValue,
+      merged.collected,
+      merged.balance,
       id,
     ]
   );
@@ -140,17 +171,28 @@ async function updateClient(id, data) {
   return getClientById(id);
 }
 
+// Soft delete — preserves all client data and linked templates so the client
+// can be restored later. listClients() excludes soft-deleted rows.
 async function deleteClient(id) {
   const existing = await getClientById(id);
   if (!existing) return { deleted: false };
-  await pool.query('DELETE FROM clients WHERE id = ?', [id]);
-  return { deleted: true, id: Number(id) };
+  await pool.query('UPDATE clients SET deleted_at = NOW() WHERE id = ?', [id]);
+  return { deleted: true, id: Number(id), softDelete: true };
+}
+
+async function restoreClient(id) {
+  const [rows] = await pool.query('SELECT id FROM clients WHERE id = ? LIMIT 1', [id]);
+  if (!rows[0]) return { restored: false };
+  await pool.query('UPDATE clients SET deleted_at = NULL WHERE id = ?', [id]);
+  return { restored: true, id: Number(id) };
 }
 
 module.exports = {
   listClients,
   getClientById,
+  getClientByEmail,
   createClient,
   updateClient,
   deleteClient,
+  restoreClient,
 };

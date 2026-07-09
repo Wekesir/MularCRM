@@ -20,6 +20,7 @@ import AuditLogs from './pages/system-config/AuditLogs';
 import ProfilePage from './pages/profile/ProfilePage';
 import ProfileDetailsTab from './pages/profile/ProfileDetailsTab';
 import ChangePasswordTab from './pages/profile/ChangePasswordTab';
+import PasskeysTab from './pages/profile/PasskeysTab';
 import CommunicationChannelsLayout from './pages/communication/CommunicationChannelsLayout';
 import ChannelsOverview from './pages/communication/channels/ChannelsOverview';
 import ChannelsSettingsLayout from './pages/communication/channels/ChannelsSettingsLayout';
@@ -58,6 +59,7 @@ function App() {
               <Route path="/profile" element={<ProfilePage />}>
                 <Route index element={<ProfileDetailsTab />} />
                 <Route path="password" element={<ChangePasswordTab />} />
+                <Route path="passkeys" element={<PasskeysTab />} />
               </Route>
               <Route path="/communication/communication-channels" element={<CommunicationChannelsLayout />}>
                 <Route index element={<ChannelsOverview />} />

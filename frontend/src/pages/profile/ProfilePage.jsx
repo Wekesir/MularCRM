@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useSystemConfig } from '../../context/SystemConfigContext';
 
 const tabs = [
   { path: '/profile', label: 'Profile', end: true },
   { path: '/profile/password', label: 'Change Password' },
+  { path: '/profile/passkeys', label: 'Device Unlock' },
 ];
 
 function ProfilePage() {

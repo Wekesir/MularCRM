@@ -46,6 +46,7 @@ import {
   UserCog,
   UserPen,
   UserRound,
+  Users,
   UsersRound,
   Wallet,
   Wrench,
@@ -53,6 +54,7 @@ import {
 
 export const sidebarIcons = {
   '/dashboard': LayoutDashboard,
+  '/users': Users,
 
   // Dropdown parents (virtual keys — these have no route of their own)
   management: FolderKanban,
