@@ -261,7 +261,7 @@ docker compose up -d --build
 
 ## CI / GHCR
 
-Pushes to `master` run [`.github/workflows/ci-ghcr.yml`](.github/workflows/ci-ghcr.yml):
+Pushes to `main` run [`.github/workflows/ci-ghcr.yml`](.github/workflows/ci-ghcr.yml):
 
 1. **Lint** — runs `npm run lint` in `frontend` and `backend` when those scripts exist; otherwise skips (stub).
 2. **Build and push** — builds production images from `Dockerfile.prod` and pushes them to GitHub Container Registry.
