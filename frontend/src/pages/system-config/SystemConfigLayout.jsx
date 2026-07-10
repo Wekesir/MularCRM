@@ -9,6 +9,7 @@ const submodules = [
   { path: '/system-configurations/business', label: 'Business Configs' },
   { path: '/system-configurations/communication', label: 'Communication Integration' },
   { path: '/system-configurations/integrations', label: 'Integrations' },
+  { path: '/system-configurations/database-backup', label: 'Database Backup', systemAdminOnly: true },
   { path: '/system-configurations/access-levels', label: 'Access Levels' },
   { path: '/system-configurations/report-access', label: 'Report Access' },
   { path: '/system-configurations/audit-logs', label: 'Audit Logs', systemAdminOnly: true },

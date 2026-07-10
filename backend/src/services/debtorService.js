@@ -474,11 +474,13 @@ async function createDebtorFile({
   debtTypeId = null,
   currencyId = null,
   uploadedBy = null,
+  batchDate = null,
+  source = null,
 } = {}) {
   const [result] = await pool.query(
     `INSERT INTO debtor_files
-      (client_id, file_name, debt_category_id, debt_type_id, currency_id, uploaded_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (client_id, file_name, debt_category_id, debt_type_id, currency_id, uploaded_by, batch_date, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       clientId != null ? Number(clientId) || null : null,
       fileName ? String(fileName).slice(0, 255) : null,
@@ -486,6 +488,8 @@ async function createDebtorFile({
       debtTypeId != null ? Number(debtTypeId) || null : null,
       currencyId != null ? Number(currencyId) || null : null,
       uploadedBy != null ? Number(uploadedBy) || null : null,
+      batchDate || null,
+      source ? String(source).slice(0, 32) : null,
     ]
   );
   return { id: result.insertId };
@@ -498,9 +502,98 @@ async function updateDebtorFileStats(id, { rowCount, importedCount, skippedCount
   );
 }
 
+/**
+ * Find the case file for a client on a calendar day (batch_date).
+ * Used by live payments API pulls so all rows for that day share one CFID.
+ */
+async function findDebtorFileForClientDay(clientId, batchDate) {
+  const cid = Number(clientId);
+  const date = String(batchDate || '').slice(0, 10);
+  if (!Number.isFinite(cid) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const [[row]] = await pool.query(
+    `SELECT id, client_id, file_name, debt_category_id, debt_type_id, currency_id,
+            row_count, imported_count, skipped_count, batch_date, source
+     FROM debtor_files
+     WHERE client_id = ?
+       AND batch_date = ?
+       AND deleted_at IS NULL
+     ORDER BY id ASC
+     LIMIT 1`,
+    [cid, date]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    fileName: row.file_name,
+    debtCategoryId: row.debt_category_id,
+    debtTypeId: row.debt_type_id,
+    currencyId: row.currency_id,
+    rowCount: row.row_count,
+    importedCount: row.imported_count,
+    skippedCount: row.skipped_count,
+    batchDate: row.batch_date,
+    source: row.source,
+  };
+}
+
+/**
+ * Find or create one debtor_files row per client per calendar day for API imports.
+ * Returns { id, cfid, created }.
+ */
+async function findOrCreateDebtorFileForClientDay({
+  clientId,
+  batchDate,
+  debtCategoryId = null,
+  debtTypeId = null,
+  currencyId = null,
+  uploadedBy = null,
+  source = 'api',
+} = {}) {
+  const date = String(batchDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const err = new Error('batchDate must be YYYY-MM-DD');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
+  const existing = await findDebtorFileForClientDay(clientId, date);
+  if (existing) {
+    return { id: existing.id, cfid: String(existing.id), created: false, file: existing };
+  }
+
+  const fileName = await resolveBatchFileName({
+    clientId,
+    debtCategoryId,
+    batchDate: date,
+  });
+  const created = await createDebtorFile({
+    clientId,
+    fileName,
+    debtCategoryId,
+    debtTypeId,
+    currencyId,
+    uploadedBy,
+    batchDate: date,
+    source,
+  });
+  return {
+    id: created.id,
+    cfid: String(created.id),
+    created: true,
+    file: { id: created.id, batchDate: date, source },
+  };
+}
+
 // Build a human-readable batch file name: clientName_debtCategory_DDMMYYYY.
 // e.g. client "Wekesir Fintech", category "loans" → "Wekesir_Fintech_loans_07072026".
-async function resolveBatchFileName({ clientId = null, debtCategoryId = null } = {}) {
+// Optional batchDate (YYYY-MM-DD) pins the date portion for API same-day files.
+async function resolveBatchFileName({
+  clientId = null,
+  debtCategoryId = null,
+  batchDate = null,
+} = {}) {
   const slug = (s) =>
     String(s || '')
       .trim()
@@ -518,10 +611,21 @@ async function resolveBatchFileName({ clientId = null, debtCategoryId = null } =
     const n = slug(dcRow?.name);
     if (n) parts.push(n);
   }
-  const now = new Date();
-  const dd = String(now.getDate()).padStart(2, '0');
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const yyyy = String(now.getFullYear());
+
+  let dd;
+  let mm;
+  let yyyy;
+  if (batchDate && /^\d{4}-\d{2}-\d{2}$/.test(String(batchDate))) {
+    const [y, m, d] = String(batchDate).split('-');
+    yyyy = y;
+    mm = m;
+    dd = d;
+  } else {
+    const now = new Date();
+    dd = String(now.getDate()).padStart(2, '0');
+    mm = String(now.getMonth() + 1).padStart(2, '0');
+    yyyy = String(now.getFullYear());
+  }
   parts.push(`${dd}${mm}${yyyy}`);
 
   const name = parts.filter(Boolean).join('_') || `batch_${dd}${mm}${yyyy}`;
@@ -688,6 +792,8 @@ module.exports = {
   createDebtorFile,
   updateDebtorFileStats,
   resolveBatchFileName,
+  findDebtorFileForClientDay,
+  findOrCreateDebtorFileForClientDay,
   softDeleteDebtorFile,
   listDebtorFiles,
   closeDebtorCase,

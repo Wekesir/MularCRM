@@ -46,6 +46,22 @@ const DEFAULT_SYSTEM_CONFIG = {
     defaultRate: 0.1,
     defaultCurrencyId: null,
   },
+  backup: {
+    enabled: false,
+    frequency: 'daily',
+    googleDrive: {
+      folderId: '',
+      serviceAccountEmail: '',
+      serviceAccountKey: '',
+    },
+  },
+  integrations: {
+    livePayments: {
+      enabled: false,
+      frequency: 'daily',
+      clients: [],
+    },
+  },
 };
 
 module.exports = { DEFAULT_SYSTEM_CONFIG };

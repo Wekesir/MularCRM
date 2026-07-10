@@ -17,6 +17,7 @@ import AccessLevels from './pages/system-config/AccessLevels';
 import Integrations from './pages/system-config/Integrations';
 import ReportAccess from './pages/system-config/ReportAccess';
 import AuditLogs from './pages/system-config/AuditLogs';
+import DatabaseBackup from './pages/system-config/DatabaseBackup';
 import ProfilePage from './pages/profile/ProfilePage';
 import ProfileDetailsTab from './pages/profile/ProfileDetailsTab';
 import ChangePasswordTab from './pages/profile/ChangePasswordTab';
@@ -76,6 +77,7 @@ function App() {
                 <Route path="business" element={<BusinessConfig />} />
                 <Route path="communication" element={<CommunicationIntegration />} />
                 <Route path="integrations" element={<Integrations />} />
+                <Route path="database-backup" element={<DatabaseBackup />} />
                 <Route path="access-levels" element={<AccessLevels />} />
                 <Route path="report-access" element={<ReportAccess />} />
                 <Route path="audit-logs" element={<AuditLogs />} />

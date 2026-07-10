@@ -1065,6 +1065,14 @@ async function initDebtConfigTables() {
 
   // Closed-file flag on the batch file (advanced filter "Closed File").
   await addColumnIfNotExists('debtor_files', 'is_closed', 'TINYINT(1) NOT NULL DEFAULT 0');
+  // Calendar day for API pulls — one case file (CFID) per client per batch_date.
+  await addColumnIfNotExists('debtor_files', 'batch_date', 'DATE NULL DEFAULT NULL');
+  await addColumnIfNotExists('debtor_files', 'source', "VARCHAR(32) NULL DEFAULT NULL");
+  await addIndexIfNotExists(
+    'debtor_files',
+    'idx_debtor_files_client_batch_date',
+    'client_id, batch_date'
+  );
 }
 
 // ── Commissions ── payments ledger (populated from daily upload deltas on

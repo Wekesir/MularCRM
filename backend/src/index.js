@@ -60,12 +60,28 @@ app.use('/api/templates', require('./routes/templates'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/commissions', require('./routes/commissions'));
 app.use('/api/client-commission-rates', require('./routes/clientCommissionRates'));
+app.use('/api/backup', require('./routes/backup'));
+app.use('/api/live-payments', require('./routes/livePayments'));
 
 async function start() {
   try {
     await initDatabase();
   } catch (error) {
     console.error('Failed to initialize database:', error.message);
+  }
+
+  try {
+    const { startBackupCron } = require('./services/backupCronService');
+    await startBackupCron();
+  } catch (error) {
+    console.error('Failed to start backup cron:', error.message);
+  }
+
+  try {
+    const { startLivePaymentsCron } = require('./services/livePaymentsCronService');
+    await startLivePaymentsCron();
+  } catch (error) {
+    console.error('Failed to start live payments cron:', error.message);
   }
 
   app.listen(PORT, () => {

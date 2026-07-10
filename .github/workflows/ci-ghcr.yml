@@ -106,3 +106,48 @@ jobs:
             VITE_API_URL=${{ vars.VITE_API_URL }}
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+
+  deploy-render:
+    name: Deploy to Render
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy backend image
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_BACKEND_DEPLOY_HOOK is not set — skipping backend deploy."
+            exit 0
+          fi
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          IMAGE="$(echo "${{ env.REGISTRY }}/${{ github.repository }}/backend:${SHORT_SHA}" | tr '[:upper:]' '[:lower:]')"
+          ENCODED="$(IMAGE="$IMAGE" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['IMAGE'], safe=''))")"
+          SEPARATOR='&'
+          case "$DEPLOY_HOOK" in
+            *\?*) ;;
+            *) SEPARATOR='?' ;;
+          esac
+          echo "Deploying ${IMAGE}"
+          curl -fsS -X POST "${DEPLOY_HOOK}${SEPARATOR}imgURL=${ENCODED}"
+          echo "Backend deploy triggered on Render."
+
+      - name: Deploy frontend image
+        env:
+          DEPLOY_HOOK: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_FRONTEND_DEPLOY_HOOK is not set — skipping frontend deploy."
+            exit 0
+          fi
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          IMAGE="$(echo "${{ env.REGISTRY }}/${{ github.repository }}/frontend:${SHORT_SHA}" | tr '[:upper:]' '[:lower:]')"
+          ENCODED="$(IMAGE="$IMAGE" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['IMAGE'], safe=''))")"
+          SEPARATOR='&'
+          case "$DEPLOY_HOOK" in
+            *\?*) ;;
+            *) SEPARATOR='?' ;;
+          esac
+          echo "Deploying ${IMAGE}"
+          curl -fsS -X POST "${DEPLOY_HOOK}${SEPARATOR}imgURL=${ENCODED}"
+          echo "Frontend deploy triggered on Render."

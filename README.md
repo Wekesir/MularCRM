@@ -265,6 +265,7 @@ Pushes to `main` run [`.github/workflows/ci-ghcr.yml`](.github/workflows/ci-ghcr
 
 1. **Lint** — runs `npm run lint` in `frontend` and `backend` when those scripts exist; otherwise skips (stub).
 2. **Build and push** — builds production images from `Dockerfile.prod` and pushes them to GitHub Container Registry.
+3. **Deploy to Render** — after a successful push, triggers Render deploy hooks so the live services pull the new images.
 
 | Image | Tags |
 |-------|------|
@@ -276,6 +277,85 @@ The workflow uses the default `GITHUB_TOKEN` with `packages: write`. After the f
 Optional: set a repository variable `VITE_API_URL` so the frontend production image bakes in your API base URL at build time.
 
 Local `docker compose` still uses the development `Dockerfile`s; production images are for registry/deploy use only.
+
+### Deploy to Render (one-time setup)
+
+Render does **not** auto-redeploy when a new image is pushed to GHCR. The workflow calls deploy hooks after each successful build.
+
+1. In Render, create two **Web Services** that deploy a **prebuilt Docker image**:
+   - Backend: `ghcr.io/<owner>/<repo>/backend:latest` (port `3000`)
+   - Frontend: `ghcr.io/<owner>/<repo>/frontend:latest` (port `80`)
+2. If the GHCR packages are private, add a **registry credential** in Render (GitHub PAT with `read:packages`) and attach it to both services.
+3. Set backend env vars on Render (`DB_*`, `JWT_SECRET`, etc.) and point the frontend build variable `VITE_API_URL` at your live API URL before the next CI build.
+4. On each service → **Settings → Deploy Hook**, copy the hook URL.
+5. In GitHub → **Settings → Secrets and variables → Actions**, add:
+   - `RENDER_BACKEND_DEPLOY_HOOK`
+   - `RENDER_FRONTEND_DEPLOY_HOOK`
+
+After that, every push to `main` that builds successfully will redeploy both services with the commit SHA image tag.
+
+## Database backup (Google Drive)
+
+System admins can configure automatic MySQL backups under **System Configurations → Database Backup**.
+
+1. In Google Cloud, create a **service account**, enable the **Google Drive API**, and download a JSON key.
+2. Create (or pick) a Drive folder and share it with the service account email as **Editor**.
+3. Copy the folder ID from the URL (`https://drive.google.com/drive/folders/FOLDER_ID`).
+4. In OMNICRM, paste the folder ID and JSON key, choose **Daily** (default), **Weekly**, or **Monthly**, enable backups, and save.
+5. Use **Run backup now** to verify. Scheduled runs use `node-cron` at 02:00 in `AUTH_SESSION_TIMEZONE` (default `Africa/Nairobi`).
+
+The backend runs `mysqldump` (requires `mysql-client` in the backend image) and uploads a timestamped `.sql` file to that Drive folder.
+
+## Live payments API integration
+
+Instead of uploading a debtor CSV every day, system admins can configure **per-client** lender APIs under **System Configurations → Integrations**.
+
+### How it works
+
+1. OMNICRM sends `POST {endpointUrl}` with body `{ "date": "YYYY-MM-DD" }` and `Authorization: Bearer <apiKey>` (header name configurable).
+2. The lender responds with a JSON **array** of debtor objects, or `{ "debtors": [ … ] }` (also accepts `data` / `rows`).
+3. Each object uses the **same field names as the debtor CSV template** (31 columns), e.g. `full_name`, `loan_id`, `phone_number`, `amount`, `amount_repaid`, `arrears`, `dpd_level`, …
+4. Rows are upserted by `(client_id, loan_id)` — same rules as CSV bulk upload (payment deltas included).
+5. **Case file (CFID):** API pulls use **one `debtor_files` row per client per calendar day** (`batch_date`). If none exists, it is created; later pulls the same day append to that CFID. New loans get that day’s CFID; existing loans keep their original CFID on update.
+
+### Developer notes
+
+| Topic | Detail |
+|-------|--------|
+| Shared importer | [`backend/src/services/debtorImportShared.js`](backend/src/services/debtorImportShared.js) — CSV and API share `importDebtorRows` |
+| API service | [`backend/src/services/livePaymentsApiService.js`](backend/src/services/livePaymentsApiService.js) — contract documented in the file header |
+| Cron | Configurable poll interval via `integrations.livePayments.frequency`: `every_1_min`, `every_5_min`, `every_15_min`, `every_30_min`, `hourly`, or `daily` (06:00). Timezone: `AUTH_SESSION_TIMEZONE` (default `Africa/Nairobi`). Overlapping runs are skipped. Shorter intervals approximate near-realtime payment visibility for agents. |
+| Routes | `GET /api/live-payments/status`, `POST /api/live-payments/pull`, `POST /api/live-payments/test-connection` (system admin) |
+| Config | `system_config.integrations.livePayments` — `enabled`, `frequency`, `clients[]` |
+| CSV vs API | Manual CSV upload still creates a **new** case file every time; only API pulls reuse the same-day CFID |
+
+### Example lender response
+
+```json
+{
+  "date": "2026-07-10",
+  "debtors": [
+    {
+      "full_name": "Jane Mwangi",
+      "phone_number": "254710595755",
+      "loan_id": "LN-2025-0001",
+      "id_number": "30123456",
+      "amount": "150000",
+      "amount_repaid": "45000",
+      "arrears": "105000",
+      "dpd_level": "45",
+      "loan_taken_date": "2025-01-15",
+      "physical_address": "12 MG Rd, Nairobi",
+      "next_of_kin_full_name": "Brian Mwangi",
+      "next_of_kin_phone_number": "254733222333",
+      "guarantor_full_name": "Peter Otieno",
+      "guarantor_phones": "254711444555"
+    }
+  ]
+}
+```
+
+Required fields match the CSV bulk-upload required columns. Optional CSV columns may be omitted or left blank.
 
 ## Backend middleware
 

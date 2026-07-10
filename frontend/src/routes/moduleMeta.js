@@ -267,6 +267,7 @@ export const pathToModuleKey = {
   '/system-configurations/business': 'system_configurations',
   '/system-configurations/communication': 'system_configurations',
   '/system-configurations/integrations': 'system_configurations',
+  '/system-configurations/database-backup': 'system_configurations',
   '/system-configurations/access-levels': 'system_configurations',
   '/system-configurations/report-access': 'system_configurations',
   '/system-configurations/audit-logs': 'system_configurations',

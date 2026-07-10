@@ -29,7 +29,64 @@ router.get('/branding', async (_req, res) => {
 
 router.put('/', requireAuth, async (req, res) => {
   try {
-    const config = await updateSystemConfig(req.body);
+    const updates = { ...req.body };
+
+    // Derive service account email from pasted JSON when provided.
+    if (updates.backup?.googleDrive?.serviceAccountKey) {
+      try {
+        const { parseServiceAccountKey } = require('../services/databaseBackupService');
+        const parsed = parseServiceAccountKey(updates.backup.googleDrive.serviceAccountKey);
+        updates.backup = {
+          ...updates.backup,
+          googleDrive: {
+            ...updates.backup.googleDrive,
+            serviceAccountEmail: parsed.client_email,
+          },
+        };
+      } catch {
+        /* validation happens on backup run */
+      }
+    }
+
+    if (updates.backup?.frequency) {
+      const { normalizeFrequency } = require('../services/backupCronService');
+      updates.backup = {
+        ...updates.backup,
+        frequency: normalizeFrequency(updates.backup.frequency),
+      };
+    }
+
+    if (updates.integrations?.livePayments?.frequency) {
+      const { normalizeFrequency } = require('../services/livePaymentsCronService');
+      updates.integrations = {
+        ...updates.integrations,
+        livePayments: {
+          ...updates.integrations.livePayments,
+          frequency: normalizeFrequency(updates.integrations.livePayments.frequency),
+        },
+      };
+    }
+
+    const config = await updateSystemConfig(updates);
+
+    if (updates.backup) {
+      try {
+        const { rescheduleBackupCron } = require('../services/backupCronService');
+        await rescheduleBackupCron();
+      } catch (error) {
+        console.error('[backup-cron] reschedule after config save failed:', error.message);
+      }
+    }
+
+    if (updates.integrations?.livePayments) {
+      try {
+        const { rescheduleLivePaymentsCron } = require('../services/livePaymentsCronService');
+        await rescheduleLivePaymentsCron();
+      } catch (error) {
+        console.error('[live-payments-cron] reschedule after config save failed:', error.message);
+      }
+    }
+
     res.json(config);
     recordActivityEvent({
       userId: req.user?.id,
