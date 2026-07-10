@@ -3,15 +3,17 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { useSystemConfig } from '../context/SystemConfigContext';
 import { getUserInitials, useUser } from '../context/UserContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { sidebarNav } from '../routes/sidebarNav';
 import { getSidebarIcon } from '../routes/sidebarIcons';
 
-function SidebarNavLink({ path, label, onNavigate }) {
+function SidebarNavLink({ path, label, onNavigate, end = false }) {
   const Icon = getSidebarIcon(path);
 
   return (
     <NavLink
       to={path}
+      end={end}
       onClick={onNavigate}
       className={({ isActive }) =>
         isActive ? 'sidebar-nav-link sidebar-nav-link-active' : 'sidebar-nav-link'
@@ -62,6 +64,7 @@ function SidebarNavDropdown({ dropdownKey, label, items, onNavigate }) {
               <NavLink
                 key={path}
                 to={path}
+                end={path === '/case-management'}
                 onClick={onNavigate}
                 className={({ isActive }) =>
                   isActive
@@ -101,15 +104,34 @@ function SidebarUserCard() {
   );
 }
 
+function isNavItemVisible(item, { canAssignCases }) {
+  if (item.assignersOnly && !canAssignCases) return false;
+  return true;
+}
+
 function SidebarNav({ onNavigate, className = '' }) {
   const { logout } = useUser();
+  const { canAssignCases } = usePermissions();
+
+  const visibleNav = sidebarNav
+    .map((item) => {
+      if (item.type === 'dropdown') {
+        const children = (item.children || []).filter((child) =>
+          isNavItemVisible(child, { canAssignCases })
+        );
+        if (children.length === 0) return null;
+        return { ...item, children };
+      }
+      return isNavItemVisible(item, { canAssignCases }) ? item : null;
+    })
+    .filter(Boolean);
 
   return (
     <div className={`sidebar-inner ${className}`.trim()}>
       <nav className="sidebar-nav-groups">
         <div className="sidebar-nav-group">
           <div className="sidebar-nav-group-items">
-            {sidebarNav.map((item) =>
+            {visibleNav.map((item) =>
               item.type === 'dropdown' ? (
                 <SidebarNavDropdown
                   key={item.key}

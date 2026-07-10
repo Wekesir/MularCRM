@@ -16,7 +16,19 @@ export const sidebarNav = [
       { path: '/management/agent-management', label: 'Agent Management' },
     ],
   },
-  { type: 'link', path: '/case-management', label: 'Case Management' },
+  {
+    type: 'dropdown',
+    key: 'case_management',
+    label: 'Case Management',
+    children: [
+      { path: '/case-management', label: 'All Cases' },
+      {
+        path: '/case-management/unassigned-files',
+        label: 'Unassigned Files',
+        assignersOnly: true,
+      },
+    ],
+  },
   {
     type: 'dropdown',
     key: 'communication',

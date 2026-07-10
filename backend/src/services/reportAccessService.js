@@ -78,6 +78,7 @@ async function getUserContext(email) {
   return {
     userId: user.id,
     email: user.email,
+    roleName: user.roleName || role.name || null,
     isSystemAdmin: role.isSystemAdmin,
     permissions,
   };
@@ -197,6 +198,7 @@ async function getUserPermissionsByEmail(email) {
   return {
     userId: context.userId,
     email: context.email,
+    roleName: context.roleName || null,
     isSystemAdmin: context.isSystemAdmin,
     permissions: context.permissions,
   };

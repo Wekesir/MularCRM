@@ -118,6 +118,77 @@ async function listClientFiles(clientId) {
   }));
 }
 
+/** Batch files that still have at least one unassigned debtor case. */
+async function listUnassignedFiles({ search = '' } = {}) {
+  const params = [];
+  let searchClause = '';
+  const q = String(search || '').trim();
+  if (q) {
+    searchClause = ' AND (df.file_name LIKE ? OR c.name LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT df.*,
+            c.name AS client_name,
+            dc.name AS debt_category_name,
+            dt.name AS debt_type_name,
+            cur.code AS currency_code,
+            cur.symbol AS currency_symbol,
+            u.name AS uploaded_by_name,
+            agg.loan_total,
+            agg.collected_total,
+            agg.outstanding_total,
+            agg.assigned_cases,
+            agg.unassigned_cases
+     FROM debtor_files df
+     LEFT JOIN clients c ON c.id = df.client_id
+     LEFT JOIN debt_categories dc ON dc.id = df.debt_category_id
+     LEFT JOIN debt_types dt ON dt.id = df.debt_type_id
+     LEFT JOIN currencies cur ON cur.id = df.currency_id
+     LEFT JOIN users u ON u.id = df.uploaded_by
+     INNER JOIN (
+       SELECT file_id,
+              COALESCE(SUM(loan_amount), 0) AS loan_total,
+              COALESCE(SUM(total_paid), 0) AS collected_total,
+              COALESCE(SUM(outstanding_balance), 0) AS outstanding_total,
+              COALESCE(SUM(CASE WHEN assigned_agent IS NOT NULL AND assigned_agent <> '' THEN 1 ELSE 0 END), 0) AS assigned_cases,
+              COALESCE(SUM(CASE WHEN assigned_agent IS NULL OR assigned_agent = '' THEN 1 ELSE 0 END), 0) AS unassigned_cases
+       FROM debtors
+       WHERE deleted_at IS NULL
+       GROUP BY file_id
+       HAVING COALESCE(SUM(CASE WHEN assigned_agent IS NULL OR assigned_agent = '' THEN 1 ELSE 0 END), 0) > 0
+     ) agg ON agg.file_id = df.id
+     WHERE df.deleted_at IS NULL
+       AND (df.is_closed = 0 OR df.is_closed IS NULL)
+       ${searchClause}
+     ORDER BY agg.unassigned_cases DESC, df.created_at DESC, df.id DESC`,
+    params
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    clientId: row.client_id || null,
+    clientName: row.client_name || null,
+    fileName: row.file_name || null,
+    debtCategoryName: row.debt_category_name || null,
+    debtTypeName: row.debt_type_name || null,
+    currencyCode: row.currency_code || null,
+    currencySymbol: row.currency_symbol || null,
+    rowCount: row.row_count || 0,
+    importedCount: row.imported_count || 0,
+    skippedCount: row.skipped_count || 0,
+    uploadedByName: row.uploaded_by_name || null,
+    loanTotal: Number(row.loan_total) || 0,
+    collectedTotal: Number(row.collected_total) || 0,
+    outstandingTotal: Number(row.outstanding_total) || 0,
+    assignedCases: Number(row.assigned_cases) || 0,
+    unassignedCases: Number(row.unassigned_cases) || 0,
+    isClosed: Boolean(row.is_closed),
+    createdAt: row.created_at,
+  }));
+}
+
 async function getFileRow(fileId) {
   const [rows] = await pool.query(
     `SELECT df.*, c.name AS client_name
@@ -617,6 +688,7 @@ async function unassignCases(fileId, debtorIds, { performedBy } = {}) {
 module.exports = {
   listClientCaseSummary,
   listClientFiles,
+  listUnassignedFiles,
   getFileAllocation,
   assignFileAgents,
   unassignFileAgents,

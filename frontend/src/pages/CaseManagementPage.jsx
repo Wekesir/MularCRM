@@ -21,6 +21,7 @@ import SectionHeader from '../components/SectionHeader';
 import { usePageActions } from '../context/PageActionsContext';
 import { usePageHeaderSticky } from '../context/PageHeaderStickyContext';
 import { useSystemConfig } from '../context/SystemConfigContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { fetchCaseSummary } from '../api/caseManagement';
 
 const PAGE_SIZE = 10;
@@ -34,12 +35,14 @@ function CaseManagementPage() {
   const { setActions } = usePageActions();
   const { headerInView } = usePageHeaderSticky();
   const { currencySymbol } = useSystemConfig();
+  const { canAssignCases } = usePermissions();
   const isDocked = !headerInView;
   const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [needsAssignmentOnly, setNeedsAssignmentOnly] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
@@ -61,6 +64,7 @@ function CaseManagementPage() {
 
   const handleRefresh = () => {
     setSearch('');
+    setNeedsAssignmentOnly(false);
     setPage(1);
     loadSummary();
     toast.info('Case list refreshed');
@@ -83,12 +87,15 @@ function CaseManagementPage() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
-    if (!q) return rows;
-    return rows.filter((r) => String(r.clientName || '').toLowerCase().includes(q));
-  }, [rows, search]);
+    return rows.filter((r) => {
+      if (needsAssignmentOnly && !(r.unassignedCases > 0)) return false;
+      if (q && !String(r.clientName || '').toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [rows, search, needsAssignmentOnly]);
 
   // Reset to first page whenever the filtered set or page size changes.
-  useEffect(() => { setPage(1); }, [search, pageSize]);
+  useEffect(() => { setPage(1); }, [search, pageSize, needsAssignmentOnly]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -134,6 +141,19 @@ function CaseManagementPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
+          {canAssignCases && (
+            <div className="cfm-toolbar-actions">
+              <button
+                type="button"
+                className={`cfm-utility-btn${needsAssignmentOnly ? ' cfm-utility-btn--active' : ''}`}
+                onClick={() => setNeedsAssignmentOnly((v) => !v)}
+                aria-pressed={needsAssignmentOnly}
+              >
+                <AlertCircle className="icon-sm" />
+                <span>{needsAssignmentOnly ? 'Showing unassigned' : 'Needs assignment'}</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Table */}
@@ -171,7 +191,9 @@ function CaseManagementPage() {
                       <Briefcase className="cm-empty-icon" aria-hidden="true" />
                       <p className="cm-empty-title">No clients to display</p>
                       <p className="cm-empty-desc">
-                        {search ? 'Try adjusting your search.' : 'Clients will appear here once debtors are imported.'}
+                        {search || needsAssignmentOnly
+                          ? 'Try adjusting your search or filters.'
+                          : 'Clients will appear here once debtors are imported.'}
                       </p>
                     </div>
                   </td>

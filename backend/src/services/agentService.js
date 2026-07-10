@@ -28,6 +28,17 @@ function normalizeAgent(row) {
 
 const AGENT_ROLE_NAMES = ['Agent'];
 
+/** True when the user has the collection Agent role (not Manager/Admin/etc.). */
+function isAgentRole(userOrRoleName) {
+  const name =
+    typeof userOrRoleName === 'string'
+      ? userOrRoleName
+      : userOrRoleName?.roleName;
+  return AGENT_ROLE_NAMES.some(
+    (r) => String(name || '').trim().toLowerCase() === r.toLowerCase()
+  );
+}
+
 async function listAgents({ experience, expertise, workload, search } = {}) {
   const params = [];
   const where = ['r.name IN (?)', 'u.deleted_at IS NULL'];
@@ -142,4 +153,6 @@ module.exports = {
   getAgentById,
   upsertAgentProfile,
   setAgentActiveStatus,
+  isAgentRole,
+  AGENT_ROLE_NAMES,
 };

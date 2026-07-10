@@ -1,6 +1,7 @@
 import {
   Archive,
   Award,
+  AlertCircle,
   BarChart3,
   Braces,
   Briefcase,
@@ -71,7 +72,9 @@ export const sidebarIcons = {
   '/management/agent-management': UserCog,
 
   // Case Management
+  case_management: Briefcase,
   '/case-management': Briefcase,
+  '/case-management/unassigned-files': AlertCircle,
 
   // Communication
   '/communication/bulk-sms': Send,

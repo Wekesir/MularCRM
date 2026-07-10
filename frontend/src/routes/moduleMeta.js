@@ -1,8 +1,7 @@
 export const moduleMeta = {
   dashboard: {
     title: 'Dashboard',
-    description:
-      'Real-time monitoring of collections, agent performance, and financial KPIs.',
+    description: 'Live collection performance, KPIs, and activity.',
   },
 
   users: {
@@ -33,7 +32,13 @@ export const moduleMeta = {
 
   case_management: {
     title: 'Case Management',
-    description: 'Track and manage collection cases from open to resolution.',
+    description:
+      'Review client portfolios and assign cases to collection agents.',
+  },
+  unassigned_files: {
+    title: 'Unassigned Files',
+    description:
+      'Batch files with debtors still waiting to be assigned to an agent.',
   },
 
   bulk_sms: {
@@ -215,6 +220,7 @@ export const pathToModuleKey = {
   '/management/agent-management': 'agent_management',
 
   '/case-management': 'case_management',
+  '/case-management/unassigned-files': 'unassigned_files',
 
   '/communication/bulk-sms': 'bulk_sms',
   '/communication/bulk-emails': 'bulk_emails',
@@ -280,6 +286,10 @@ export function getModuleMeta(pathname) {
 
   if (pathname.startsWith('/system-configurations')) {
     return moduleMeta.system_configurations;
+  }
+
+  if (pathname.startsWith('/case-management/unassigned-files')) {
+    return moduleMeta.unassigned_files;
   }
 
   if (pathname.startsWith('/case-management')) {

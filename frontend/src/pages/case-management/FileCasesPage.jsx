@@ -81,7 +81,7 @@ function FileCasesPage() {
   const { headerInView } = usePageHeaderSticky();
   const { currencySymbol } = useSystemConfig();
   const { confirm } = useConfirm();
-  const { isSystemAdmin } = usePermissions();
+  const { canAssignCases } = usePermissions();
   const isDocked = !headerInView;
 
   const [file, setFile] = useState(null);
@@ -338,7 +338,7 @@ function FileCasesPage() {
   };
 
   useEffect(() => {
-    if (isSystemAdmin) {
+    if (canAssignCases) {
       setActions(
         <>
           <button type="button" className="btn-icon-outline" aria-label="Refresh" onClick={handleRefresh}>
@@ -362,7 +362,7 @@ function FileCasesPage() {
       );
     }
     return () => setActions(null);
-  }, [setActions, isSystemAdmin]);
+  }, [setActions, canAssignCases]);
 
   const fileName = file?.fileName || `File #${fileId}`;
   const clientName = file?.clientName || '';
@@ -551,8 +551,8 @@ function FileCasesPage() {
         </div>
       )}
 
-      {/* Bulk action bar (supervisors only) */}
-      {isSystemAdmin && (
+      {/* Bulk action bar (supervisors / non-Agent users) */}
+      {canAssignCases && (
         <div className="fca-bulk-bar">
           <div className="fca-bulk-meta">
             <CheckCircle2 className="icon-sm" />
@@ -623,7 +623,7 @@ function FileCasesPage() {
           <table className="cm-table fca-table">
             <thead>
               <tr>
-                {isSystemAdmin && (
+                {canAssignCases && (
                   <th className="cm-th fca-th-check">
                     <input
                       ref={selectAllRef}
@@ -647,13 +647,13 @@ function FileCasesPage() {
                 <th className="cm-th">Phone</th>
                 <th className="cm-th">Assigned Agent</th>
                 <th className="cm-th">Case Status</th>
-                {isSystemAdmin && <th className="cm-th cm-th-actions">Actions</th>}
+                {canAssignCases && <th className="cm-th cm-th-actions">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td className="cm-td cm-td-empty" colSpan={isSystemAdmin ? 10 : 9}>
+                  <td className="cm-td cm-td-empty" colSpan={canAssignCases ? 10 : 9}>
                     <div className="cm-empty-state">
                       <Loader2 className="cm-empty-icon spin" aria-hidden="true" />
                       <p className="cm-empty-title">Loading cases…</p>
@@ -662,7 +662,7 @@ function FileCasesPage() {
                 </tr>
               ) : pageRows.length === 0 ? (
                 <tr>
-                  <td className="cm-td cm-td-empty" colSpan={isSystemAdmin ? 10 : 9}>
+                  <td className="cm-td cm-td-empty" colSpan={canAssignCases ? 10 : 9}>
                     <div className="cm-empty-state">
                       <FileText className="cm-empty-icon" aria-hidden="true" />
                       <p className="cm-empty-title">No cases found</p>
@@ -680,7 +680,7 @@ function FileCasesPage() {
                   const checked = selected.has(d.id);
                   return (
                     <tr key={d.id} className={`cm-table-row${checked ? ' fca-row--selected' : ''}`}>
-                      {isSystemAdmin && (
+                      {canAssignCases && (
                         <td className="cm-td fca-td-check">
                           <input
                             type="checkbox"
@@ -726,7 +726,7 @@ function FileCasesPage() {
                           {isAssigned ? 'assigned' : 'unassigned'}
                         </span>
                       </td>
-                      {isSystemAdmin && (
+                      {canAssignCases && (
                         <td className="cm-td cm-td-actions">
                           <div className="fca-row-actions">
                             <button

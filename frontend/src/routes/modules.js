@@ -14,6 +14,7 @@ import AgentManagementPage from '../pages/management/AgentManagementPage';
 import CaseManagementPage from '../pages/CaseManagementPage';
 import ClientFilesPage from '../pages/ClientFilesPage';
 import FileCasesPage from '../pages/case-management/FileCasesPage.jsx';
+import UnassignedFilesPage from '../pages/case-management/UnassignedFilesPage.jsx';
 
 // Communication
 import BulkSmsPage from '../pages/communication/BulkSmsPage';
@@ -74,6 +75,11 @@ export const modules = [
   { path: '/management/agent-management', label: 'Agent Management', component: AgentManagementPage },
 
   { path: '/case-management', label: 'Case Management', component: CaseManagementPage },
+  {
+    path: '/case-management/unassigned-files',
+    label: 'Unassigned Files',
+    component: UnassignedFilesPage,
+  },
   { path: '/case-management/clients/:clientId/files', label: 'Client Files', component: ClientFilesPage, hidden: true },
   { path: '/case-management/clients/:clientId/files/:fileId/cases', label: 'File Cases', component: FileCasesPage, hidden: true },
 

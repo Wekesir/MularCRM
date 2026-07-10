@@ -30,6 +30,7 @@ const defaultSession = {
 const initialState = {
   user: emptyUser,
   userId: null,
+  roleName: null,
   isSystemAdmin: false,
   mustResetPassword: false,
   permissions: null,
@@ -144,6 +145,7 @@ function applyAuthSuccess(state, payload) {
     avatar: payload.user.avatar || '',
   };
   state.userId = payload.user.id;
+  state.roleName = payload.user.roleName || payload.roleName || null;
   state.isSystemAdmin = payload.isSystemAdmin;
   state.mustResetPassword = Boolean(payload.user.mustResetPassword);
   state.permissions = payload.permissions;
@@ -167,6 +169,7 @@ const authSlice = createSlice({
       state.session = { ...defaultSession };
       state.user = { ...emptyUser };
       state.userId = null;
+      state.roleName = null;
       state.isSystemAdmin = false;
       state.mustResetPassword = false;
       state.permissions = null;
@@ -180,6 +183,7 @@ const authSlice = createSlice({
       state.session = { ...defaultSession };
       state.user = { ...emptyUser };
       state.userId = null;
+      state.roleName = null;
       state.isSystemAdmin = false;
       state.mustResetPassword = false;
       state.permissions = null;
@@ -206,6 +210,7 @@ const authSlice = createSlice({
 
         state.user = { ...emptyUser, ...incoming.user };
         state.userId = incoming.userId ?? null;
+        state.roleName = incoming.roleName ?? null;
         state.isSystemAdmin = incoming.isSystemAdmin ?? false;
         state.mustResetPassword = incoming.mustResetPassword ?? false;
         state.permissions = incoming.permissions ?? null;
@@ -222,6 +227,7 @@ const authSlice = createSlice({
           state.session = { ...defaultSession };
           state.user = { ...emptyUser };
           state.userId = null;
+          state.roleName = null;
           state.isSystemAdmin = false;
           state.mustResetPassword = false;
           state.permissions = null;
@@ -276,6 +282,7 @@ const authSlice = createSlice({
           avatar: action.payload.avatar || '',
         };
         state.userId = action.payload.id;
+        state.roleName = action.payload.roleName || null;
         state.isSystemAdmin = action.payload.isSystemAdmin;
         state.mustResetPassword = Boolean(action.payload.mustResetPassword);
         state.session.isAuthenticated = true;
@@ -284,6 +291,7 @@ const authSlice = createSlice({
         state.session = { ...defaultSession };
         state.user = { ...emptyUser };
         state.userId = null;
+        state.roleName = null;
         state.isSystemAdmin = false;
         state.mustResetPassword = false;
         state.permissions = null;
@@ -295,6 +303,7 @@ const authSlice = createSlice({
       })
       .addCase(loadUserPermissions.fulfilled, (state, action) => {
         state.userId = action.payload.userId;
+        state.roleName = action.payload.roleName ?? state.roleName;
         state.isSystemAdmin = action.payload.isSystemAdmin;
         state.permissions = action.payload.permissions;
         state.permissionsLoaded = true;

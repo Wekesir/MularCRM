@@ -2,12 +2,20 @@ import { useCallback, useMemo } from 'react';
 import { useAppSelector } from '../store/hooks';
 import { slugToPermissionKey } from '../routes/reportRegistry';
 
+const AGENT_ROLE_NAME = 'agent';
+
 export function usePermissions() {
   const permissions = useAppSelector((state) => state.auth.permissions);
   const isSystemAdmin = useAppSelector((state) => state.auth.isSystemAdmin);
+  const roleName = useAppSelector((state) => state.auth.roleName);
   const permissionsLoaded = useAppSelector((state) => state.auth.permissionsLoaded);
   const permissionsLoading = useAppSelector((state) => state.auth.permissionsLoading);
   const permissionsError = useAppSelector((state) => state.auth.permissionsError);
+
+  const isAgent = String(roleName || '').trim().toLowerCase() === AGENT_ROLE_NAME;
+
+  /** Non-Agent users (and System Admins) may assign/reallocate cases. */
+  const canAssignCases = Boolean(isSystemAdmin) || !isAgent;
 
   const canReadReport = useCallback(
     (slug) => {
@@ -39,6 +47,9 @@ export function usePermissions() {
   return useMemo(
     () => ({
       permissions,
+      roleName,
+      isAgent,
+      canAssignCases,
       isSystemAdmin,
       permissionsLoaded,
       permissionsLoading,
@@ -46,6 +57,17 @@ export function usePermissions() {
       canReadReport,
       canReadModule,
     }),
-    [permissions, isSystemAdmin, permissionsLoaded, permissionsLoading, permissionsError, canReadReport, canReadModule]
+    [
+      permissions,
+      roleName,
+      isAgent,
+      canAssignCases,
+      isSystemAdmin,
+      permissionsLoaded,
+      permissionsLoading,
+      permissionsError,
+      canReadReport,
+      canReadModule,
+    ]
   );
 }

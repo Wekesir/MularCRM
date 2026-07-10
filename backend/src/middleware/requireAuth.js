@@ -23,6 +23,8 @@ async function requireAuth(req, res, next) {
     id: user.id,
     email: user.email,
     name: user.name,
+    roleId: user.roleId,
+    roleName: user.roleName,
     isSystemAdmin: user.isSystemAdmin,
   };
   req.authToken = token;

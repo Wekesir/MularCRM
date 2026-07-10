@@ -2,6 +2,7 @@ const express = require('express');
 const {
   listClientCaseSummary,
   listClientFiles,
+  listUnassignedFiles,
   getFileAllocation,
   assignFileAgents,
   unassignFileAgents,
@@ -10,6 +11,7 @@ const {
   unassignCases,
 } = require('../services/caseManagementService');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requireCaseAssigner } = require('../middleware/requireCaseAssigner');
 
 const router = express.Router();
 
@@ -22,6 +24,16 @@ router.get('/', async (req, res) => {
     res.json(summary);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load case summary', detail: error.message });
+  }
+});
+
+// Batch files that still have unassigned cases — Unassigned Files module.
+router.get('/unassigned-files', requireCaseAssigner, async (req, res) => {
+  try {
+    const files = await listUnassignedFiles({ search: req.query.search || '' });
+    res.json(files);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to load unassigned files', detail: error.message });
   }
 });
 
@@ -48,7 +60,7 @@ router.get('/files/:fileId/allocation', async (req, res) => {
 });
 
 // Round-robin assign the file's unassigned cases to the selected agents.
-router.post('/files/:fileId/assign', async (req, res) => {
+router.post('/files/:fileId/assign', requireCaseAssigner, async (req, res) => {
   try {
     const result = await assignFileAgents(req.params.fileId, req.body?.agentIds || [], {
       performedBy: req.user,
@@ -62,7 +74,7 @@ router.post('/files/:fileId/assign', async (req, res) => {
 });
 
 // Clear assignments for the chosen agents within the file.
-router.post('/files/:fileId/unassign', async (req, res) => {
+router.post('/files/:fileId/unassign', requireCaseAssigner, async (req, res) => {
   try {
     const result = await unassignFileAgents(req.params.fileId, req.body?.agentIds || [], {
       performedBy: req.user,
@@ -76,7 +88,7 @@ router.post('/files/:fileId/unassign', async (req, res) => {
 });
 
 // Move cases from one agent to another within the file.
-router.post('/files/:fileId/reallocate', async (req, res) => {
+router.post('/files/:fileId/reallocate', requireCaseAssigner, async (req, res) => {
   try {
     const result = await reallocateFileAgents(
       req.params.fileId,
@@ -92,7 +104,7 @@ router.post('/files/:fileId/reallocate', async (req, res) => {
 });
 
 // Assign a specific set of cases (by debtor id) to chosen agents (round-robin).
-router.post('/files/:fileId/cases/assign', async (req, res) => {
+router.post('/files/:fileId/cases/assign', requireCaseAssigner, async (req, res) => {
   try {
     const result = await assignCases(
       req.params.fileId,
@@ -109,7 +121,7 @@ router.post('/files/:fileId/cases/assign', async (req, res) => {
 });
 
 // Clear assignments on a specific set of cases (by debtor id).
-router.post('/files/:fileId/cases/unassign', async (req, res) => {
+router.post('/files/:fileId/cases/unassign', requireCaseAssigner, async (req, res) => {
   try {
     const result = await unassignCases(req.params.fileId, req.body?.debtorIds || [], {
       performedBy: req.user,

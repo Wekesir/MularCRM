@@ -28,6 +28,7 @@ import SectionHeader from '../components/SectionHeader';
 import { usePageActions } from '../context/PageActionsContext';
 import { usePageHeaderSticky } from '../context/PageHeaderStickyContext';
 import { useSystemConfig } from '../context/SystemConfigContext';
+import { usePermissions } from '../hooks/usePermissions';
 import { fetchCaseSummary, fetchClientFiles } from '../api/caseManagement';
 import AssignCasesModal from '../components/AssignCasesModal';
 
@@ -57,6 +58,7 @@ function ClientFilesPage() {
   const { setActions } = usePageActions();
   const { headerInView } = usePageHeaderSticky();
   const { currencySymbol } = useSystemConfig();
+  const { canAssignCases } = usePermissions();
   const isDocked = !headerInView;
 
   const [client, setClient] = useState(null);
@@ -230,14 +232,16 @@ function ClientFilesPage() {
           </button>
         </div>
         <div className="cfm-top-bar-right">
-          <button
-            type="button"
-            className="cfm-btn-new"
-            onClick={() => notImplemented('New case assignment')}
-          >
-            <Plus className="icon-sm" />
-            New Case Assignment
-          </button>
+          {canAssignCases && (
+            <button
+              type="button"
+              className="cfm-btn-new"
+              onClick={() => notImplemented('New case assignment')}
+            >
+              <Plus className="icon-sm" />
+              New Case Assignment
+            </button>
+          )}
         </div>
       </div>
 
@@ -418,13 +422,15 @@ function ClientFilesPage() {
                       <td className="cm-td cm-td-num cm-money">{formatMoneyDecimals(f.loanTotal)}</td>
                       <td className="cm-td cm-td-actions">
                         <div className="cfm-row-actions">
-                          <button
-                            type="button"
-                            className="cfm-pill-btn cfm-pill-btn--assign"
-                            onClick={() => setAssignFile(f)}
-                          >
-                            Assign
-                          </button>
+                          {canAssignCases && (
+                            <button
+                              type="button"
+                              className="cfm-pill-btn cfm-pill-btn--assign"
+                              onClick={() => setAssignFile(f)}
+                            >
+                              Assign
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="cfm-pill-btn cfm-pill-btn--view"

@@ -1,6 +1,7 @@
 const express = require('express');
 const { listAgents, getAgentById, upsertAgentProfile, setAgentActiveStatus } = require('../services/agentService');
 const { getKpisByUserId, upsertKpis } = require('../services/agentKpiService');
+const { getAgentDashboard } = require('../services/agentDashboardService');
 const { recordActivityEvent } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requireSystemAdmin } = require('../middleware/requireSystemAdmin');
@@ -21,6 +22,22 @@ router.get('/', async (req, res) => {
     res.json(agents);
   } catch (error) {
     res.status(500).json({ message: 'Failed to list agents', detail: error.message });
+  }
+});
+
+// Personal agent dashboard — must be registered before /:id
+router.get('/me/dashboard', async (req, res) => {
+  try {
+    const data = await getAgentDashboard(req.user, { period: req.query.period });
+    res.json(data);
+  } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message });
+    }
+    if (error.code === 'NOT_FOUND' || error.status === 404) {
+      return res.status(404).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Failed to load agent dashboard', detail: error.message });
   }
 });
 

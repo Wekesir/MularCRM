@@ -15,6 +15,7 @@ const PERMISSION_REGISTRY = [
     ],
   },
   { key: 'case_management', label: 'Case Management' },
+  { key: 'unassigned_files', label: 'Unassigned Files' },
   {
     key: 'communication',
     label: 'Communication',
