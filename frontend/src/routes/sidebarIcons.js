@@ -70,10 +70,12 @@ export const sidebarIcons = {
   '/management/file-management': FolderOpen,
   '/management/closed-files': Archive,
   '/management/agent-management': UserCog,
+  '/management/call-centers': Headset,
 
   // Case Management
   case_management: Briefcase,
   '/case-management': Briefcase,
+  '/case-management/my-portfolio': Headset,
   '/case-management/unassigned-files': AlertCircle,
 
   // Communication

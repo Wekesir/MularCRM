@@ -1,7 +1,7 @@
 export const moduleMeta = {
   dashboard: {
     title: 'Dashboard',
-    description: 'Live collection performance, KPIs, and activity.',
+    description: 'Your collection performance, KPIs, and recent activity.',
   },
 
   users: {
@@ -29,11 +29,25 @@ export const moduleMeta = {
     title: 'Agent Management',
     description: 'Manage collection agents, roles, and performance.',
   },
+  call_centers: {
+    title: 'Call Centers',
+    description: 'Create and manage mini call centers, supervisors, and staffing.',
+  },
 
   case_management: {
     title: 'Case Management',
     description:
       'Review client portfolios and assign cases to collection agents.',
+  },
+  all_cases: {
+    title: 'All Cases',
+    description:
+      'Review client portfolios and assign cases to collection agents.',
+  },
+  my_portfolio: {
+    title: 'My Portfolio',
+    description:
+      'Work the debtors assigned to you — call, SMS, email, and log responses.',
   },
   unassigned_files: {
     title: 'Unassigned Files',
@@ -178,8 +192,9 @@ export const moduleMeta = {
     description: 'Configure areas of expertise used to route cases to agents.',
   },
   client_agents: {
-    title: 'Client Agents',
-    description: 'Configure which agents are assigned to which clients.',
+    title: 'Client Call Centers',
+    description:
+      'Assign each client to a call center once. New batches then auto-appear for that center.',
   },
   workload_parameters: {
     title: 'Workload Parameters',
@@ -218,8 +233,10 @@ export const pathToModuleKey = {
   '/management/file-management': 'file_management',
   '/management/closed-files': 'closed_files',
   '/management/agent-management': 'agent_management',
+  '/management/call-centers': 'call_centers',
 
-  '/case-management': 'case_management',
+  '/case-management': 'all_cases',
+  '/case-management/my-portfolio': 'my_portfolio',
   '/case-management/unassigned-files': 'unassigned_files',
 
   '/communication/bulk-sms': 'bulk_sms',
@@ -279,6 +296,104 @@ export const pathToModuleKey = {
   '/system-configurations/audit-logs': 'system_configurations',
 };
 
+/**
+ * Maps sidebar / route paths to the nested permission registry keys.
+ * Shape: { module: string, sub?: string }
+ * - Leaf modules use { module } only (e.g. dashboard, unassigned_files).
+ * - Nested modules use { module, sub } (e.g. management.client_management).
+ * - Parent-only links (system_configurations) omit `sub` and grant access if
+ *   any submodule under that parent is readable.
+ * Paths with no entry (e.g. /users) are admin-only via isSystemAdmin.
+ */
+export const pathToPermission = {
+  '/dashboard': { module: 'dashboard' },
+
+  '/management/client-management': { module: 'management', sub: 'client_management' },
+  '/management/debtor-management': { module: 'management', sub: 'debtor_management' },
+  '/management/file-management': { module: 'management', sub: 'file_management' },
+  '/management/closed-files': { module: 'management', sub: 'closed_files' },
+  '/management/agent-management': { module: 'management', sub: 'agent_management' },
+  '/management/call-centers': { module: 'management', sub: 'call_centers' },
+
+  '/case-management': { module: 'case_management', sub: 'all_cases' },
+  '/case-management/my-portfolio': { module: 'case_management', sub: 'my_portfolio' },
+  '/case-management/unassigned-files': { module: 'unassigned_files' },
+
+  '/communication/bulk-sms': { module: 'communication', sub: 'bulk_sms' },
+  '/communication/bulk-emails': { module: 'communication', sub: 'bulk_emails' },
+  '/communication/communication-channels': {
+    module: 'communication',
+    sub: 'communication_channels',
+  },
+  '/communication/discounts-and-waivers': {
+    module: 'communication',
+    sub: 'discounts_and_waivers',
+  },
+
+  '/contact-upload': { module: 'contact_upload' },
+
+  '/payments/payments': { module: 'payments', sub: 'payments' },
+  '/payments/commissions': { module: 'payments', sub: 'commissions' },
+  '/payments/ptp': { module: 'payments', sub: 'ptp' },
+  '/payments/non-confirmed-payments': {
+    module: 'payments',
+    sub: 'non_confirmed_payments',
+  },
+
+  '/reports/debtor-summary': { module: 'reports', sub: 'debtor_summary' },
+  '/reports/payment-performance': { module: 'reports', sub: 'payment_performance' },
+  '/reports/collector-performance': { module: 'reports', sub: 'collector_performance' },
+  '/reports/portfolio-performance': { module: 'reports', sub: 'portfolio_performance' },
+  '/reports/promise-to-pay': { module: 'reports', sub: 'promise_to_pay' },
+  '/reports/aging-report': { module: 'reports', sub: 'aging_report' },
+  '/reports/dispute-management': { module: 'reports', sub: 'dispute_management' },
+  '/reports/recovery-rate': { module: 'reports', sub: 'recovery_rate' },
+  '/reports/goip-calls-report': { module: 'reports', sub: 'goip_calls_report' },
+  '/reports/sms-report': { module: 'reports', sub: 'sms_report' },
+  '/reports/debtor-notes': { module: 'reports', sub: 'debtor_notes' },
+  '/reports/contact-attempt': { module: 'reports', sub: 'contact_attempt' },
+
+  '/settings/commission-rates': { module: 'settings', sub: 'commission_rates' },
+  '/settings/debt-type': { module: 'settings', sub: 'debt_type' },
+  '/settings/debt-category': { module: 'settings', sub: 'debt_category' },
+  '/settings/client-type': { module: 'settings', sub: 'client_type' },
+  '/settings/debtor-upload-rules': { module: 'settings', sub: 'debtor_upload_rules' },
+  '/settings/currency': { module: 'settings', sub: 'currency' },
+  '/settings/payment-channels': { module: 'settings', sub: 'payment_channels' },
+  '/settings/closure-reason': { module: 'settings', sub: 'closure_reason' },
+  '/settings/template-variables': { module: 'settings', sub: 'template_variables' },
+  '/settings/case-priority': { module: 'settings', sub: 'case_priority' },
+  '/settings/agent-experience': { module: 'settings', sub: 'agent_experience' },
+  '/settings/agent-expertise': { module: 'settings', sub: 'agent_expertise' },
+  '/settings/client-agents': { module: 'settings', sub: 'client_agents' },
+  '/settings/workload-parameters': { module: 'settings', sub: 'workload_parameters' },
+  '/settings/contactability': { module: 'settings', sub: 'contactability' },
+  '/settings/contact-type': { module: 'settings', sub: 'contact_type' },
+  '/settings/contact-status': { module: 'settings', sub: 'contact_status' },
+
+  '/system-configurations': { module: 'system_configurations' },
+  '/system-configurations/business': {
+    module: 'system_configurations',
+    sub: 'business',
+  },
+  '/system-configurations/communication': {
+    module: 'system_configurations',
+    sub: 'communication',
+  },
+  '/system-configurations/integrations': {
+    module: 'system_configurations',
+    sub: 'integrations',
+  },
+  '/system-configurations/access-levels': {
+    module: 'system_configurations',
+    sub: 'access_levels',
+  },
+  '/system-configurations/report-access': {
+    module: 'system_configurations',
+    sub: 'report_access',
+  },
+};
+
 export function getModuleMeta(pathname) {
   if (pathToModuleKey[pathname]) {
     return moduleMeta[pathToModuleKey[pathname]];
@@ -292,8 +407,12 @@ export function getModuleMeta(pathname) {
     return moduleMeta.unassigned_files;
   }
 
+  if (pathname.startsWith('/case-management/my-portfolio')) {
+    return moduleMeta.my_portfolio;
+  }
+
   if (pathname.startsWith('/case-management')) {
-    return moduleMeta.case_management;
+    return moduleMeta.all_cases;
   }
 
   if (pathname.startsWith('/communication/communication-channels')) {

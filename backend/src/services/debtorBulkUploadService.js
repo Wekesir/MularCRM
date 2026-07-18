@@ -1,3 +1,4 @@
+const pool = require('../db/pool');
 const {
   createDebtorFile,
   resolveBatchFileName,
@@ -8,6 +9,9 @@ const {
   MAX_DATA_ROWS,
   importDebtorRows,
 } = require('./debtorImportShared');
+const { getClientById, assignClientCallCenter } = require('./clientService');
+const { isSeniorSupervisorRole } = require('../config/orgRoles');
+const { recordActivityEvent } = require('./activityService');
 
 const TEMPLATE_FILENAME = 'debtor-upload-template.csv';
 const EXPECTED_HEADERS = COLUMNS.map((c) => c.header.toLowerCase());
@@ -17,6 +21,93 @@ class BulkUploadError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+/**
+ * Resolve call center for a bulk upload:
+ * - Prefer client's existing call_center_id (automatic).
+ * - Else require explicit callCenterId (Senior/Admin).
+ * - Reject mismatch unless forceOverride (Senior/Admin).
+ * Optionally assigns the client to the center when unbound.
+ */
+async function resolveUploadCallCenter({
+  clientId,
+  callCenterId,
+  performedBy = null,
+  forceOverride = false,
+} = {}) {
+  const client = clientId ? await getClientById(clientId) : null;
+  if (!client) {
+    throw new BulkUploadError('Select a valid client before uploading.', {
+      code: 'INVALID_STRUCTURE',
+    });
+  }
+
+  const clientCenterId = client.callCenterId != null ? Number(client.callCenterId) : null;
+  const requestedCenterId =
+    callCenterId != null && callCenterId !== '' ? Number(callCenterId) : null;
+
+  let resolvedCenterId = clientCenterId;
+  if (!resolvedCenterId) {
+    if (!Number.isFinite(requestedCenterId)) {
+      throw new BulkUploadError(
+        'This client is not assigned to a call center. Select a call center to bind this upload.',
+        { code: 'INVALID_STRUCTURE' }
+      );
+    }
+    resolvedCenterId = requestedCenterId;
+  } else if (
+    Number.isFinite(requestedCenterId) &&
+    requestedCenterId !== clientCenterId
+  ) {
+    // Client already bound — keep that center unless Senior/Admin forces override.
+    const canForce =
+      Boolean(forceOverride) &&
+      (Boolean(performedBy?.isSystemAdmin) || isSeniorSupervisorRole(performedBy));
+    if (canForce) {
+      resolvedCenterId = requestedCenterId;
+    }
+  }
+
+  const [centers] = await pool.query(
+    `SELECT id, name, status FROM call_centers
+     WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+    [resolvedCenterId]
+  );
+  if (!centers[0]) {
+    throw new BulkUploadError('Selected call center was not found.', {
+      code: 'INVALID_STRUCTURE',
+    });
+  }
+  if (centers[0].status !== 'active') {
+    throw new BulkUploadError('Selected call center is inactive.', {
+      code: 'INVALID_STRUCTURE',
+    });
+  }
+
+  // Keep client ↔ center aligned when the client was unbound.
+  if (!clientCenterId) {
+    await assignClientCallCenter(clientId, resolvedCenterId, {
+      performedBy,
+      force: false,
+    });
+  } else if (
+    Number.isFinite(requestedCenterId) &&
+    requestedCenterId !== clientCenterId &&
+    forceOverride
+  ) {
+    await assignClientCallCenter(clientId, resolvedCenterId, {
+      performedBy,
+      force: true,
+    });
+  }
+
+  return {
+    callCenterId: resolvedCenterId,
+    callCenterName: centers[0].name,
+    clientName: client.name,
+    autoBound: Boolean(clientCenterId),
+  };
 }
 
 function parseCsv(text) {
@@ -140,6 +231,8 @@ async function parseAndImportDebtors(buffer, userId, options = {}) {
     currencyId: options.currencyId != null ? Number(options.currencyId) || null : null,
   };
 
+  const performedBy = options.performedBy || (userId ? { id: userId } : null);
+
   let text;
   try {
     text = buffer.toString('utf-8');
@@ -173,6 +266,14 @@ async function parseAndImportDebtors(buffer, userId, options = {}) {
     );
   }
 
+  // Resolve after CSV validation so a bad file never mutates client↔center mapping.
+  const centerInfo = await resolveUploadCallCenter({
+    clientId: batchDefaults.clientId,
+    callCenterId: options.callCenterId,
+    performedBy,
+    forceOverride: Boolean(options.forceCallCenter),
+  });
+
   const fileName = await resolveBatchFileName({
     clientId: batchDefaults.clientId,
     debtCategoryId: batchDefaults.debtCategoryId,
@@ -185,6 +286,8 @@ async function parseAndImportDebtors(buffer, userId, options = {}) {
     currencyId: batchDefaults.currencyId,
     uploadedBy: userId,
     source: 'csv',
+    callCenterId: centerInfo.callCenterId,
+    callCenterAssignedBy: userId,
   });
   const fileId = debtorFile.id;
   const cfid = String(fileId);
@@ -201,7 +304,7 @@ async function parseAndImportDebtors(buffer, userId, options = {}) {
     rowObjects.push(cellsMap);
   }
 
-  return importDebtorRows(rowObjects, {
+  const result = await importDebtorRows(rowObjects, {
     ...batchDefaults,
     userId,
     fileId,
@@ -209,12 +312,41 @@ async function parseAndImportDebtors(buffer, userId, options = {}) {
     maxRows: MAX_DATA_ROWS,
     replaceStats: true,
   });
+
+  recordActivityEvent({
+    userId: performedBy?.id ?? userId ?? null,
+    userName: performedBy?.name ?? null,
+    actionType: 'debtor_file.uploaded',
+    title: 'Debtor Batch Uploaded',
+    subject: fileName || `Batch #${fileId}`,
+    entityType: 'debtor_file',
+    entityId: String(fileId),
+    metadata: {
+      fileId,
+      clientId: batchDefaults.clientId,
+      clientName: centerInfo.clientName,
+      callCenterId: centerInfo.callCenterId,
+      callCenterName: centerInfo.callCenterName,
+      autoBound: centerInfo.autoBound,
+      importedCount: result.createdCount,
+      updatedCount: result.updatedCount,
+      failedCount: result.failedCount,
+    },
+  }).catch(() => {});
+
+  return {
+    ...result,
+    callCenterId: centerInfo.callCenterId,
+    callCenterName: centerInfo.callCenterName,
+    fileName,
+  };
 }
 
 module.exports = {
   generateTemplateBuffer,
   templateHeaders,
   parseAndImportDebtors,
+  resolveUploadCallCenter,
   BulkUploadError,
   MAX_DATA_ROWS,
   TEMPLATE_FILENAME,

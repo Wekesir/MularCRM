@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   X,
   User,
@@ -23,7 +23,19 @@ import {
   TrendingUp,
   DollarSign,
   Activity,
+  ArrowLeftRight,
+  CheckCircle2,
+  ClipboardCheck,
+  MailCheck,
+  MessageSquareText,
+  PhoneCall,
+  UserMinus,
+  UserPlus,
+  RefreshCw,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
+import { toast } from 'react-toastify';
 import { fetchDebtorHistory } from '../api/debtors';
 import { useSystemConfig } from '../context/SystemConfigContext';
 
@@ -50,6 +62,88 @@ function formatShortDate(value) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function eventVisual(actionType) {
+  const type = String(actionType || '').toLowerCase();
+  if (type === 'debtor.created') {
+    return { label: 'Imported', tone: 'import', icon: ClipboardCheck };
+  }
+  if (type === 'contact.sms') {
+    return { label: 'SMS', tone: 'contact', icon: MessageSquareText };
+  }
+  if (type === 'contact.email') {
+    return { label: 'Email', tone: 'contact', icon: MailCheck };
+  }
+  if (type === 'contact.call') {
+    return { label: 'Call', tone: 'contact', icon: PhoneCall };
+  }
+  if (type === 'contact.response') {
+    return { label: 'Response', tone: 'contact', icon: MessageSquareText };
+  }
+  if (type === 'contact.ptp' || type === 'ptp.updated') {
+    return { label: 'PTP', tone: 'ptp', icon: CheckCircle2 };
+  }
+  if (type === 'debtor.assigned') {
+    return { label: 'Assigned', tone: 'assignment', icon: UserPlus };
+  }
+  if (type === 'debtor.unassigned') {
+    return { label: 'Unassigned', tone: 'assignment', icon: UserMinus };
+  }
+  if (type === 'debtor.reassigned') {
+    return { label: 'Reassigned', tone: 'assignment', icon: ArrowLeftRight };
+  }
+  if (type === 'payment.detected') {
+    return { label: 'Payment', tone: 'payment', icon: Wallet };
+  }
+  if (type === 'debtor.updated') {
+    return { label: 'Updated', tone: 'update', icon: Pencil };
+  }
+  if (type === 'debtor.soft_deleted') {
+    return { label: 'Removed', tone: 'removed', icon: Trash2 };
+  }
+  if (type === 'debtor.case_closed') {
+    return { label: 'Closed', tone: 'case', icon: AlertCircle };
+  }
+  if (type === 'debtor.case_reopened') {
+    return { label: 'Reopened', tone: 'case', icon: AlertCircle };
+  }
+  return { label: 'Activity', tone: 'default', icon: Activity };
+}
+
+function buildEventDetails(evt, currencySymbol) {
+  const metadata = evt.metadata || {};
+  const details = [];
+
+  if (metadata.channel) details.push(`Channel: ${metadata.channel.toUpperCase()}`);
+  if (metadata.agentName && metadata.previousAgentName) {
+    details.push(`Agent: ${metadata.previousAgentName} -> ${metadata.agentName}`);
+  } else if (metadata.agentName) {
+    details.push(`Agent: ${metadata.agentName}`);
+  } else if (metadata.previousAgentName) {
+    details.push(`Previous Agent: ${metadata.previousAgentName}`);
+  }
+
+  if (metadata.contactStatusName) details.push(`Status: ${metadata.contactStatusName}`);
+  if (metadata.nextActionDate) details.push(`Next Action: ${formatShortDate(metadata.nextActionDate)}`);
+  if (metadata.promiseDate) details.push(`Promise Date: ${formatShortDate(metadata.promiseDate)}`);
+  if (metadata.reminderDate) details.push(`Reminder: ${formatShortDate(metadata.reminderDate)}`);
+  if (Array.isArray(metadata.changedFields) && metadata.changedFields.length > 0) {
+    details.push(`Changed: ${metadata.changedFields.join(', ')}`);
+  }
+  if (metadata.source === 'backfill') details.push('Source: Opening balance');
+  else if (metadata.source === 'upload_delta') details.push('Source: Payment upload');
+  else if (metadata.source === 'upload_reversal') details.push('Source: Payment reversal');
+  else if (metadata.source === 'file_delete') details.push('Source: Batch file deleted');
+  else if (metadata.source === 'import') details.push('Source: Import / re-upload');
+
+  const amountValue = evt.amount ?? metadata.promisedAmount ?? null;
+  if (amountValue !== null && amountValue !== undefined && Number(amountValue)) {
+    details.push(`Amount: ${formatMoney(amountValue, currencySymbol)}`);
+  }
+  if (metadata.notes) details.push(`Notes: ${metadata.notes}`);
+
+  return details;
 }
 
 function InfoRow({ icon: Icon, label, value }) {
@@ -79,6 +173,7 @@ function SectionTitle({ icon: Icon, children }) {
 
 function DebtorHistoryModal({ debtor, onClose }) {
   const open = Boolean(debtor);
+  const debtorId = debtor?.id ?? null;
   const { currencySymbol } = useSystemConfig();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -90,16 +185,43 @@ function DebtorHistoryModal({ debtor, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  const loadHistory = useCallback(async ({ silent = false } = {}) => {
+    if (!debtorId) {
+      setData(null);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetchDebtorHistory(debtorId);
+      setData(res);
+    } catch (err) {
+      setData(null);
+      if (!silent) {
+        toast.error(err.response?.data?.message || 'Failed to load activity timeline');
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [debtorId]);
+
   useEffect(() => {
-    if (!debtor) { setData(null); return undefined; }
+    if (!debtorId) {
+      setData(null);
+      return undefined;
+    }
     let cancelled = false;
     setLoading(true);
-    fetchDebtorHistory(debtor.id)
+    fetchDebtorHistory(debtorId)
       .then((res) => { if (!cancelled) setData(res); })
-      .catch(() => { if (!cancelled) setData(null); })
+      .catch((err) => {
+        if (!cancelled) {
+          setData(null);
+          toast.error(err.response?.data?.message || 'Failed to load activity timeline');
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [debtor]);
+  }, [debtorId]);
 
   if (!debtor) return null;
 
@@ -273,6 +395,16 @@ function DebtorHistoryModal({ debtor, onClose }) {
               </span>
               <span className="dh-right-header-title">Platform Activity</span>
               <span className="dh-right-header-count">{loading ? '…' : history.length}</span>
+              <button
+                type="button"
+                className="btn-icon-outline dh-refresh-btn"
+                onClick={() => loadHistory({ silent: false })}
+                disabled={loading}
+                aria-label="Refresh activity"
+                title="Refresh activity"
+              >
+                <RefreshCw size={14} className={loading ? 'spin' : undefined} />
+              </button>
             </div>
 
             <div className="dh-right-body">
@@ -291,19 +423,45 @@ function DebtorHistoryModal({ debtor, onClose }) {
                 </div>
               ) : (
                 <ul className="dh-timeline">
-                  {history.map((evt) => (
+                  {history.map((evt) => {
+                    const visual = eventVisual(evt.actionType);
+                    const EventIcon = visual.icon;
+                    const details = buildEventDetails(evt, currencySymbol);
+                    return (
                     <li key={evt.id} className="dh-timeline-item">
                       <span className="dh-timeline-dot" aria-hidden="true" />
                       <div className="dh-timeline-content">
-                        <p className="dh-timeline-title">{evt.title}</p>
+                        <div className="dh-timeline-head">
+                          <span className={`dh-event-chip dh-event-chip--${visual.tone}`}>
+                            <EventIcon size={11} />
+                            {visual.label}
+                          </span>
+                          {evt.actionType ? (
+                            <span className="dh-event-code">{evt.actionType}</span>
+                          ) : null}
+                        </div>
+                        <p className="dh-timeline-title">{evt.title || 'Activity'}</p>
+                        {evt.subject && evt.subject !== debtor.name ? (
+                          <p className="dh-timeline-subject">{evt.subject}</p>
+                        ) : null}
                         <p className="dh-timeline-meta">
                           <Clock size={10} className="dh-timeline-meta-icon" />
                           {formatDate(evt.createdAt)}
                           {evt.userName ? ` · ${evt.userName}` : ''}
                         </p>
+                        {details.length > 0 ? (
+                          <div className="dh-timeline-details">
+                            {details.map((detail, idx) => (
+                              <p key={`${evt.id}-d-${idx}`} className="dh-timeline-detail">
+                                {detail}
+                              </p>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               )}
             </div>

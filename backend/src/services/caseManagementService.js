@@ -1,11 +1,77 @@
 const pool = require('../db/pool');
 const { getAgentById } = require('./agentService');
 const { notifyAgentOfAssignment } = require('./caseAssignmentNotifications');
+const { recordActivityEvents } = require('./activityService');
+const { assertCallerCanAccessClient } = require('./clientService');
+const {
+  resolveCallCenterScope,
+  isSupervisorRole,
+} = require('../config/orgRoles');
+
+/** Prefer file-level call center, fall back to client's binding. */
+function resolveFileCallCenterId(file) {
+  if (!file) return null;
+  if (file.call_center_id != null) return Number(file.call_center_id);
+  return null;
+}
+
+async function getFileCallCenterId(file) {
+  const fromFile = resolveFileCallCenterId(file);
+  if (fromFile) return fromFile;
+  return getClientCallCenterId(file?.client_id);
+}
+
+async function assertCallerCanAccessFile(user, file) {
+  if (!user || user.isSystemAdmin) return;
+  const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'company') return;
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+  const fileCenter = await getFileCallCenterId(file);
+  if (!fileCenter || Number(fileCenter) !== Number(scope.callCenterId)) {
+    const err = new Error('This portfolio is not assigned to your call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+}
+
+async function assertAgentsInCallerCenter(user, agents, fileClientCallCenterId) {
+  if (!user || user.isSystemAdmin) return;
+  const scope = resolveCallCenterScope(user);
+  const requiredCenter =
+    scope.mode === 'center' ? scope.callCenterId : fileClientCallCenterId;
+  if (!requiredCenter) return;
+
+  const outsiders = agents.filter(
+    (a) => !a.callCenterId || Number(a.callCenterId) !== Number(requiredCenter)
+  );
+  if (outsiders.length) {
+    const err = new Error(
+      'All selected agents must belong to the same call center as this portfolio'
+    );
+    err.code = 'VALIDATION';
+    throw err;
+  }
+}
+
+async function getClientCallCenterId(clientId) {
+  if (!clientId) return null;
+  const [rows] = await pool.query(
+    `SELECT call_center_id FROM clients WHERE id = ? LIMIT 1`,
+    [clientId]
+  );
+  return rows[0]?.call_center_id != null ? Number(rows[0].call_center_id) : null;
+}
 
 // Per-client case summary used by the Case Management table.
 // Aggregates are computed in dedicated subqueries to avoid the cartesian
 // product that joining debtors + debtor_files on client_id would create.
-async function listClientCaseSummary({ search = '' } = {}) {
+async function listClientCaseSummary({ search = '', user = null } = {}) {
   const params = [];
   let where = 'WHERE c.deleted_at IS NULL';
   const q = String(search || '').trim();
@@ -13,6 +79,30 @@ async function listClientCaseSummary({ search = '' } = {}) {
     where += ' AND c.name LIKE ?';
     params.push(`%${q}%`);
   }
+
+  let centerId = null;
+  if (user) {
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'center') {
+      if (!scope.callCenterId) return [];
+      centerId = scope.callCenterId;
+      where += ' AND c.call_center_id = ?';
+      params.push(scope.callCenterId);
+    } else if (scope.mode === 'none') {
+      return [];
+    }
+  }
+
+  // When center-scoped, count only files/debtors bound to that center
+  // (file center preferred; legacy client bind when file has no center).
+  const fileCenterSql = centerId
+    ? ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c2.call_center_id = ?))'
+    : '';
+  const debtorCenterSql = centerId
+    ? ' AND COALESCE(df.call_center_id, c2.call_center_id) = ?'
+    : '';
+  const fileParams = centerId ? [centerId, centerId] : [];
+  const debtorParams = centerId ? [centerId] : [];
 
   const [rows] = await pool.query(
     `SELECT c.id,
@@ -24,24 +114,27 @@ async function listClientCaseSummary({ search = '' } = {}) {
             COALESCE(d.unassigned_cases, 0) AS unassigned_cases
      FROM clients c
      LEFT JOIN (
-       SELECT client_id, COUNT(*) AS total_files
-       FROM debtor_files
-       WHERE deleted_at IS NULL
-       GROUP BY client_id
+       SELECT df.client_id, COUNT(*) AS total_files
+       FROM debtor_files df
+       LEFT JOIN clients c2 ON c2.id = df.client_id
+       WHERE df.deleted_at IS NULL${fileCenterSql}
+       GROUP BY df.client_id
      ) f ON f.client_id = c.id
      LEFT JOIN (
-       SELECT client_id,
+       SELECT d.client_id,
               COUNT(*) AS total_cases,
-              COALESCE(SUM(loan_amount), 0) AS total_amount,
-              COALESCE(SUM(CASE WHEN assigned_agent IS NOT NULL AND assigned_agent <> '' THEN 1 ELSE 0 END), 0) AS assigned_cases,
-              COALESCE(SUM(CASE WHEN assigned_agent IS NULL OR assigned_agent = '' THEN 1 ELSE 0 END), 0) AS unassigned_cases
-       FROM debtors
-       WHERE deleted_at IS NULL
-       GROUP BY client_id
+              COALESCE(SUM(d.loan_amount), 0) AS total_amount,
+              COALESCE(SUM(CASE WHEN d.assigned_agent IS NOT NULL AND d.assigned_agent <> '' THEN 1 ELSE 0 END), 0) AS assigned_cases,
+              COALESCE(SUM(CASE WHEN d.assigned_agent IS NULL OR d.assigned_agent = '' THEN 1 ELSE 0 END), 0) AS unassigned_cases
+       FROM debtors d
+       LEFT JOIN debtor_files df ON df.id = d.file_id
+       LEFT JOIN clients c2 ON c2.id = d.client_id
+       WHERE d.deleted_at IS NULL${debtorCenterSql}
+       GROUP BY d.client_id
      ) d ON d.client_id = c.id
      ${where}
      ORDER BY d.total_cases DESC, c.name ASC`,
-    params
+    [...fileParams, ...debtorParams, ...params]
   );
 
   return rows.map((r) => ({
@@ -57,9 +150,21 @@ async function listClientCaseSummary({ search = '' } = {}) {
 
 // All (non-deleted) batch files belonging to a single client, with the same
 // aggregated stats shape as listDebtorFiles so the modal can reuse the layout.
-async function listClientFiles(clientId) {
+async function listClientFiles(clientId, { user = null } = {}) {
   const id = Number(clientId);
   if (!Number.isFinite(id)) return [];
+  if (user) await assertCallerCanAccessClient(user, id);
+
+  const params = [id];
+  let centerClause = '';
+  if (user) {
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'center' && scope.callCenterId) {
+      centerClause =
+        ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))';
+      params.push(scope.callCenterId, scope.callCenterId);
+    }
+  }
 
   const [rows] = await pool.query(
     `SELECT df.*,
@@ -90,9 +195,9 @@ async function listClientFiles(clientId) {
               COALESCE(SUM(CASE WHEN assigned_agent IS NULL OR assigned_agent = '' THEN 1 ELSE 0 END), 0) AS unassigned_cases
        FROM debtors WHERE deleted_at IS NULL GROUP BY file_id
      ) agg ON agg.file_id = df.id
-     WHERE df.client_id = ? AND df.deleted_at IS NULL
+     WHERE df.client_id = ? AND df.deleted_at IS NULL${centerClause}
      ORDER BY df.created_at DESC, df.id DESC`,
-    [id]
+    params
   );
 
   return rows.map((row) => ({
@@ -119,7 +224,7 @@ async function listClientFiles(clientId) {
 }
 
 /** Batch files that still have at least one unassigned debtor case. */
-async function listUnassignedFiles({ search = '' } = {}) {
+async function listUnassignedFiles({ search = '', user = null } = {}) {
   const params = [];
   let searchClause = '';
   const q = String(search || '').trim();
@@ -128,9 +233,25 @@ async function listUnassignedFiles({ search = '' } = {}) {
     params.push(`%${q}%`, `%${q}%`);
   }
 
+  let centerClause = '';
+  if (user) {
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'center') {
+      if (!scope.callCenterId) return [];
+      // Prefer file bind; only use client bind when the file has no center
+      // (avoids surfacing another center's file for a shared client).
+      centerClause =
+        ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))';
+      params.push(scope.callCenterId, scope.callCenterId);
+    } else if (scope.mode === 'none') {
+      return [];
+    }
+  }
+
   const [rows] = await pool.query(
     `SELECT df.*,
             c.name AS client_name,
+            cc.name AS call_center_name,
             dc.name AS debt_category_name,
             dt.name AS debt_type_name,
             cur.code AS currency_code,
@@ -143,6 +264,7 @@ async function listUnassignedFiles({ search = '' } = {}) {
             agg.unassigned_cases
      FROM debtor_files df
      LEFT JOIN clients c ON c.id = df.client_id
+     LEFT JOIN call_centers cc ON cc.id = COALESCE(df.call_center_id, c.call_center_id) AND cc.deleted_at IS NULL
      LEFT JOIN debt_categories dc ON dc.id = df.debt_category_id
      LEFT JOIN debt_types dt ON dt.id = df.debt_type_id
      LEFT JOIN currencies cur ON cur.id = df.currency_id
@@ -161,7 +283,9 @@ async function listUnassignedFiles({ search = '' } = {}) {
      ) agg ON agg.file_id = df.id
      WHERE df.deleted_at IS NULL
        AND (df.is_closed = 0 OR df.is_closed IS NULL)
+       AND (df.call_center_id IS NOT NULL OR c.call_center_id IS NOT NULL)
        ${searchClause}
+       ${centerClause}
      ORDER BY agg.unassigned_cases DESC, df.created_at DESC, df.id DESC`,
     params
   );
@@ -170,6 +294,10 @@ async function listUnassignedFiles({ search = '' } = {}) {
     id: row.id,
     clientId: row.client_id || null,
     clientName: row.client_name || null,
+    callCenterId: row.call_center_id != null
+      ? Number(row.call_center_id)
+      : null,
+    callCenterName: row.call_center_name || null,
     fileName: row.file_name || null,
     debtCategoryName: row.debt_category_name || null,
     debtTypeName: row.debt_type_name || null,
@@ -201,16 +329,62 @@ async function getFileRow(fileId) {
   return rows[0] || null;
 }
 
+function assignmentEventTitle(actionType, metadata = {}) {
+  const agent = metadata.agentName || null;
+  const previous = metadata.previousAgentName || null;
+  if (actionType === 'debtor.reassigned' && previous && agent) {
+    return `Reassigned from ${previous} to ${agent}`;
+  }
+  if (actionType === 'debtor.assigned' && agent) {
+    return `Assigned to ${agent}`;
+  }
+  if (actionType === 'debtor.unassigned' && previous) {
+    return `Unassigned from ${previous}`;
+  }
+  if (actionType === 'debtor.reassigned') return 'Debtor Reassigned';
+  if (actionType === 'debtor.unassigned') return 'Debtor Unassigned';
+  return 'Debtor Assigned';
+}
+
+async function recordDebtorAssignmentEvents(events = [], { performedBy, fileId }) {
+  if (!Array.isArray(events) || events.length === 0) return 0;
+  const payload = events.map((evt) => {
+    const metadata = {
+      ...(evt.metadata || {}),
+      fileId: Number(fileId) || null,
+      source: 'case_management',
+    };
+    return {
+      userId: performedBy?.id ?? null,
+      userName: performedBy?.name ?? null,
+      actionType: evt.actionType,
+      title: evt.title || assignmentEventTitle(evt.actionType, metadata),
+      subject: evt.subject || null,
+      entityType: 'debtor',
+      entityId: String(evt.debtorId),
+      metadata,
+    };
+  });
+  const inserted = await recordActivityEvents(payload);
+  if (inserted < payload.length) {
+    console.warn(
+      `[caseManagement] Recorded ${inserted}/${payload.length} debtor assignment activity events`
+    );
+  }
+  return inserted;
+}
+
 // Current allocation breakdown for a case file: per-agent case counts +
 // portfolio value, plus unassigned totals. `assigned_agent` is a VARCHAR
 // holding the agent's name, so we resolve the agent id by joining users on
 // name (best-effort — unmatched names get agentId: null).
-async function getFileAllocation(fileId) {
+async function getFileAllocation(fileId, { user = null } = {}) {
   const id = Number(fileId);
   if (!Number.isFinite(id)) return null;
 
   const file = await getFileRow(id);
   if (!file) return null;
+  if (user) await assertCallerCanAccessFile(user, file);
 
   const [rows] = await pool.query(
     `SELECT d.assigned_agent AS agent_name,
@@ -286,6 +460,17 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
     throw err;
   }
 
+  if (performedBy) {
+    await assertCallerCanAccessFile(performedBy, file);
+  }
+
+  const fileCenterId = await getFileCallCenterId(file);
+  if (!fileCenterId && isSupervisorRole(performedBy) && !performedBy?.isSystemAdmin) {
+    const err = new Error('This portfolio has not been assigned to a call center yet');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
   const agents = [];
   for (const agentId of ids) {
     const agent = await getAgentById(agentId);
@@ -298,12 +483,14 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
     throw err;
   }
 
+  await assertAgentsInCallerCenter(performedBy, agents, fileCenterId);
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
     const [unassigned] = await conn.query(
-      `SELECT id FROM debtors
+      `SELECT id, name FROM debtors
        WHERE file_id = ? AND deleted_at IS NULL
          AND (assigned_agent IS NULL OR assigned_agent = '')
        ORDER BY id ASC
@@ -312,6 +499,7 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
     );
 
     const perAgentCounts = new Map(agents.map((a) => [a.id, 0]));
+    const debtorEvents = [];
     for (let i = 0; i < unassigned.length; i += 1) {
       const agent = agents[i % agents.length];
       await conn.query('UPDATE debtors SET assigned_agent = ? WHERE id = ?', [
@@ -319,9 +507,18 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
         unassigned[i].id,
       ]);
       perAgentCounts.set(agent.id, perAgentCounts.get(agent.id) + 1);
+      const metadata = { agentName: agent.name };
+      debtorEvents.push({
+        debtorId: unassigned[i].id,
+        actionType: 'debtor.assigned',
+        title: assignmentEventTitle('debtor.assigned', metadata),
+        subject: unassigned[i].name || `Debtor #${unassigned[i].id}`,
+        metadata,
+      });
     }
 
     await conn.commit();
+    await recordDebtorAssignmentEvents(debtorEvents, { performedBy, fileId: id });
 
     const affected = agents
       .map((a) => ({ agent: a, caseCount: perAgentCounts.get(a.id) }))
@@ -378,6 +575,10 @@ async function unassignFileAgents(fileId, agentIds, { performedBy } = {}) {
     throw err;
   }
 
+  if (performedBy) {
+    await assertCallerCanAccessFile(performedBy, file);
+  }
+
   const agents = [];
   for (const agentId of ids) {
     const agent = await getAgentById(agentId);
@@ -389,16 +590,33 @@ async function unassignFileAgents(fileId, agentIds, { performedBy } = {}) {
     throw err;
   }
 
-  const agentNames = agents.map((a) => a.name);
   const results = [];
+  const debtorEvents = [];
 
   for (const agent of agents) {
+    const [assignedRows] = await pool.query(
+      `SELECT id, name FROM debtors
+       WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
+      [id, agent.name]
+    );
     const [result] = await pool.query(
       `UPDATE debtors SET assigned_agent = NULL
        WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
       [id, agent.name]
     );
     const caseCount = result.affectedRows || 0;
+    if (caseCount > 0) {
+      assignedRows.forEach((row) => {
+        const metadata = { previousAgentName: agent.name };
+        debtorEvents.push({
+          debtorId: row.id,
+          actionType: 'debtor.unassigned',
+          title: assignmentEventTitle('debtor.unassigned', metadata),
+          subject: row.name || `Debtor #${row.id}`,
+          metadata,
+        });
+      });
+    }
     results.push({ agentId: agent.id, agentName: agent.name, caseCount });
     if (caseCount > 0) {
       notifyAgentOfAssignment({
@@ -410,6 +628,8 @@ async function unassignFileAgents(fileId, agentIds, { performedBy } = {}) {
       }).catch(() => {});
     }
   }
+
+  await recordDebtorAssignmentEvents(debtorEvents, { performedBy, fileId: id });
 
   return {
     fileId: id,
@@ -444,6 +664,10 @@ async function reallocateFileAgents(fileId, { fromAgentId, toAgentId } = {}, { p
     throw err;
   }
 
+  if (performedBy) {
+    await assertCallerCanAccessFile(performedBy, file);
+  }
+
   const fromAgent = await getAgentById(fromAgentId);
   const toAgent = await getAgentById(toAgentId);
   if (!fromAgent || !toAgent) {
@@ -452,14 +676,42 @@ async function reallocateFileAgents(fileId, { fromAgentId, toAgentId } = {}, { p
     throw err;
   }
 
-  const [result] = await pool.query(
-    `UPDATE debtors SET assigned_agent = ?
-     WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
-    [toAgent.name, id, fromAgent.name]
-  );
-  const caseCount = result.affectedRows || 0;
+  const fileCenterId = await getFileCallCenterId(file);
+  await assertAgentsInCallerCenter(performedBy, [fromAgent, toAgent], fileCenterId);
+
+  const conn = await pool.getConnection();
+  let movedRows = [];
+  let caseCount = 0;
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query(
+      `SELECT id, name FROM debtors
+       WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?
+       FOR UPDATE`,
+      [id, fromAgent.name]
+    );
+    movedRows = rows;
+    if (movedRows.length > 0) {
+      const [result] = await conn.query(
+        `UPDATE debtors SET assigned_agent = ?
+         WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
+        [toAgent.name, id, fromAgent.name]
+      );
+      caseCount = result.affectedRows || 0;
+    }
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 
   if (caseCount > 0) {
+    const metadata = {
+      previousAgentName: fromAgent.name,
+      agentName: toAgent.name,
+    };
     notifyAgentOfAssignment({
       agent: fromAgent,
       action: 'unallocated',
@@ -474,6 +726,16 @@ async function reallocateFileAgents(fileId, { fromAgentId, toAgentId } = {}, { p
       caseCount,
       performedBy,
     }).catch(() => {});
+    await recordDebtorAssignmentEvents(
+      movedRows.map((row) => ({
+        debtorId: row.id,
+        actionType: 'debtor.reassigned',
+        title: assignmentEventTitle('debtor.reassigned', metadata),
+        subject: row.name || `Debtor #${row.id}`,
+        metadata,
+      })),
+      { performedBy, fileId: id }
+    );
   }
 
   return {
@@ -514,6 +776,10 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
     throw err;
   }
 
+  if (performedBy) {
+    await assertCallerCanAccessFile(performedBy, file);
+  }
+
   const agents = [];
   for (const agentId of aIds) {
     const agent = await getAgentById(agentId);
@@ -525,13 +791,16 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
     throw err;
   }
 
+  const fileCenterId = await getFileCallCenterId(file);
+  await assertAgentsInCallerCenter(performedBy, agents, fileCenterId);
+
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
     // Only debtors that actually belong to this file are eligible.
     const [rows] = await conn.query(
-      `SELECT id, assigned_agent FROM debtors
+      `SELECT id, name, assigned_agent FROM debtors
        WHERE file_id = ? AND deleted_at IS NULL AND id IN (?)
        ORDER BY id ASC
        FOR UPDATE`,
@@ -546,7 +815,7 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
 
     const gained = new Map(); // agentId -> count
     const lost = new Map(); // agentName -> count (previously assigned agent)
-    const agentById = new Map(agents.map((a) => [a.id, a]));
+    const debtorEvents = [];
 
     for (let i = 0; i < rows.length; i += 1) {
       const debtor = rows[i];
@@ -564,9 +833,24 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
         target.name,
         debtor.id,
       ]);
+      if (!prevName || prevName !== target.name) {
+        const actionType = prevName ? 'debtor.reassigned' : 'debtor.assigned';
+        const metadata = {
+          previousAgentName: prevName,
+          agentName: target.name,
+        };
+        debtorEvents.push({
+          debtorId: debtor.id,
+          actionType,
+          title: assignmentEventTitle(actionType, metadata),
+          subject: debtor.name || `Debtor #${debtor.id}`,
+          metadata,
+        });
+      }
     }
 
     await conn.commit();
+    await recordDebtorAssignmentEvents(debtorEvents, { performedBy, fileId: id });
 
     // Best-effort notifications: gainers -> assigned, losers -> unallocated,
     // agents that both lost and gained -> reallocated.
@@ -636,8 +920,12 @@ async function unassignCases(fileId, debtorIds, { performedBy } = {}) {
     throw err;
   }
 
+  if (performedBy) {
+    await assertCallerCanAccessFile(performedBy, file);
+  }
+
   const [rows] = await pool.query(
-    `SELECT id, assigned_agent FROM debtors
+    `SELECT id, name, assigned_agent FROM debtors
      WHERE file_id = ? AND deleted_at IS NULL AND id IN (?)`,
     [id, dIds]
   );
@@ -648,9 +936,18 @@ async function unassignCases(fileId, debtorIds, { performedBy } = {}) {
   }
 
   const lost = new Map(); // agentName -> count
+  const debtorEvents = [];
   for (const row of rows) {
     if (row.assigned_agent) {
       lost.set(row.assigned_agent, (lost.get(row.assigned_agent) || 0) + 1);
+      const metadata = { previousAgentName: row.assigned_agent };
+      debtorEvents.push({
+        debtorId: row.id,
+        actionType: 'debtor.unassigned',
+        title: assignmentEventTitle('debtor.unassigned', metadata),
+        subject: row.name || `Debtor #${row.id}`,
+        metadata,
+      });
     }
   }
 
@@ -677,6 +974,7 @@ async function unassignCases(fileId, debtorIds, { performedBy } = {}) {
       : { id: null, name: agentName, email: null, phone: null };
     notifyAgentOfAssignment({ agent, action: 'unallocated', file, caseCount, performedBy }).catch(() => {});
   }
+  await recordDebtorAssignmentEvents(debtorEvents, { performedBy, fileId: id });
 
   return {
     fileId: id,
@@ -695,4 +993,6 @@ module.exports = {
   reallocateFileAgents,
   assignCases,
   unassignCases,
+  assertCallerCanAccessFile,
+  assertCallerCanAccessClient,
 };

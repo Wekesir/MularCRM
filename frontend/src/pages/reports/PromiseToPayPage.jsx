@@ -1,12 +1,13 @@
 import { CalendarClock } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function PromiseToPayPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="promise-to-pay"
       icon={CalendarClock}
       title="Promise To Pay"
-      description="Report on promise-to-pay arrangements and their outcomes."
+      description="PTP arrangements and outcomes"
     />
   );
 }

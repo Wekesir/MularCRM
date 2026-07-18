@@ -1,12 +1,13 @@
 import { TrendingUp } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function PaymentPerformancePage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="payment-performance"
       icon={TrendingUp}
       title="Payment Performance"
-      description="Analyze payment trends and collection performance over time."
+      description="Payment trends and collection performance"
     />
   );
 }

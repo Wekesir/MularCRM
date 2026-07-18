@@ -70,9 +70,10 @@ function maskEmail(email) {
 
 async function getUserAuthRow(email) {
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name
      FROM users u
      JOIN roles r ON u.role_id = r.id
+     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
      WHERE LOWER(u.email) = ?
      LIMIT 1`,
     [email.trim().toLowerCase()]
@@ -133,6 +134,8 @@ function buildAuthUser(row) {
     isSystemAdmin: Boolean(row.is_system_admin),
     isActive: Boolean(row.is_active),
     mustResetPassword: Boolean(row.must_reset_password),
+    callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
+    callCenterName: row.call_center_name || null,
     avatar: '',
   };
 }
@@ -479,6 +482,8 @@ async function getMe(userId) {
     isSystemAdmin: user.isSystemAdmin,
     isActive: user.isActive,
     mustResetPassword: Boolean(extra.must_reset_password),
+    callCenterId: user.callCenterId ?? null,
+    callCenterName: user.callCenterName ?? null,
     avatar: '',
   };
 }

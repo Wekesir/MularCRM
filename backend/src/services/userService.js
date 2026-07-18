@@ -21,17 +21,24 @@ function normalizeUser(row) {
     permissionOverrides: parseJson(row.permission_overrides, null),
     isActive: Boolean(row.is_active),
     mustResetPassword: Boolean(row.must_reset_password),
+    callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
+    callCenterName: row.call_center_name || null,
     deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
+const USER_SELECT = `
+  SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name
+  FROM users u
+  JOIN roles r ON u.role_id = r.id
+  LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+`;
+
 async function listUsers() {
   const [rows] = await pool.query(`
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
+    ${USER_SELECT}
     WHERE u.deleted_at IS NULL
     ORDER BY u.name ASC
   `);
@@ -44,13 +51,14 @@ async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '
   const baseFrom = `
     FROM users u
     JOIN roles r ON u.role_id = r.id
+    LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
     WHERE u.deleted_at IS NULL
   `;
   const searchClause = searchValue
-    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ?)'
+    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ? OR cc.name LIKE ?)'
     : '';
   const searchParams = searchValue
-    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
+    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
     : [];
 
   const [countAllRows] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom}`);
@@ -61,7 +69,7 @@ async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '
     : countAllRows;
 
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin ${baseFrom}${searchClause} ORDER BY u.name ASC LIMIT ? OFFSET ?`,
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name ${baseFrom}${searchClause} ORDER BY u.name ASC LIMIT ? OFFSET ?`,
     [...searchParams, Number(length), Number(start)]
   );
 
@@ -75,9 +83,7 @@ async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '
 
 async function listDeletedUsers() {
   const [rows] = await pool.query(`
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
+    ${USER_SELECT}
     WHERE u.deleted_at IS NOT NULL
     ORDER BY u.deleted_at DESC
   `);
@@ -95,6 +101,7 @@ async function listDeletedUsersPaginated({
   const baseFrom = `
     FROM users u
     JOIN roles r ON u.role_id = r.id
+    LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
     WHERE u.deleted_at IS NOT NULL
   `;
   const searchClause = searchValue
@@ -112,7 +119,7 @@ async function listDeletedUsersPaginated({
     : countAllRows;
 
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin ${baseFrom}${searchClause} ORDER BY u.deleted_at DESC LIMIT ? OFFSET ?`,
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name ${baseFrom}${searchClause} ORDER BY u.deleted_at DESC LIMIT ? OFFSET ?`,
     [...searchParams, Number(length), Number(start)]
   );
 
@@ -125,29 +132,51 @@ async function listDeletedUsersPaginated({
 }
 
 async function getUserById(id) {
-  const [rows] = await pool.query(`
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-    WHERE u.id = ?
-  `, [id]);
+  const [rows] = await pool.query(
+    `${USER_SELECT}
+     WHERE u.id = ?`,
+    [id]
+  );
 
   return rows.length ? normalizeUser(rows[0]) : null;
 }
 
 async function getUserByEmail(email) {
   const [rows] = await pool.query(
-    `
-    SELECT u.*, r.name AS role_name, r.is_system_admin
-    FROM users u
-    JOIN roles r ON u.role_id = r.id
-    WHERE u.email = ?
-    LIMIT 1
-  `,
+    `${USER_SELECT}
+     WHERE u.email = ?
+     LIMIT 1`,
     [email]
   );
 
   return rows.length ? normalizeUser(rows[0]) : null;
+}
+
+async function resolveRoleName(roleId) {
+  const [rows] = await pool.query('SELECT name FROM roles WHERE id = ? LIMIT 1', [roleId]);
+  return rows[0]?.name || null;
+}
+
+async function validateCallCenterForRole(roleName, callCenterId) {
+  const { requiresCallCenter } = require('../config/orgRoles');
+  if (!requiresCallCenter(roleName)) {
+    return { callCenterId: null };
+  }
+  const id = callCenterId != null && callCenterId !== '' ? Number(callCenterId) : null;
+  if (!Number.isFinite(id)) {
+    return { error: 'Call center is required for Agents and Supervisors', code: 'VALIDATION' };
+  }
+  const [centers] = await pool.query(
+    `SELECT id, status FROM call_centers WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+    [id]
+  );
+  if (!centers[0]) {
+    return { error: 'Call center not found', code: 'VALIDATION' };
+  }
+  if (centers[0].status !== 'active') {
+    return { error: 'Call center is inactive', code: 'VALIDATION' };
+  }
+  return { callCenterId: id };
 }
 
 async function createUser({
@@ -158,6 +187,7 @@ async function createUser({
   isActive = true,
   phone = null,
   password = null,
+  callCenterId = null,
 }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const existing = await getUserByEmail(normalizedEmail);
@@ -178,13 +208,17 @@ async function createUser({
     };
   }
 
+  const roleName = await resolveRoleName(roleId);
+  const centerCheck = await validateCallCenterForRole(roleName, callCenterId);
+  if (centerCheck.error) return centerCheck;
+
   const { hashPassword } = require('./passwordService');
   const passwordHash = password ? hashPassword(password) : null;
   const mustResetPassword = Boolean(password);
 
   const [result] = await pool.query(
-    `INSERT INTO users (name, email, role_id, permission_overrides, is_active, phone, password_hash, must_reset_password)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (name, email, role_id, permission_overrides, is_active, phone, password_hash, must_reset_password, call_center_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name,
       normalizedEmail,
@@ -194,6 +228,7 @@ async function createUser({
       phone || null,
       passwordHash,
       mustResetPassword,
+      centerCheck.callCenterId,
     ]
   );
 
@@ -202,10 +237,17 @@ async function createUser({
 
 async function updateUser(
   id,
-  { name, email, roleId, permissionOverrides, isActive, phone, password }
+  { name, email, roleId, permissionOverrides, isActive, phone, password, callCenterId }
 ) {
   const user = await getUserById(id);
   if (!user) return null;
+
+  const nextRoleId = roleId ?? user.roleId;
+  const roleName = await resolveRoleName(nextRoleId);
+  const nextCenter =
+    callCenterId !== undefined ? callCenterId : user.callCenterId;
+  const centerCheck = await validateCallCenterForRole(roleName, nextCenter);
+  if (centerCheck.error) return centerCheck;
 
   const { hashPassword } = require('./passwordService');
   let passwordHash = undefined;
@@ -224,13 +266,14 @@ async function updateUser(
       permission_overrides = ?,
       is_active = ?,
       phone = ?,
+      call_center_id = ?,
       password_hash = COALESCE(?, password_hash),
       must_reset_password = COALESCE(?, must_reset_password)
      WHERE id = ?`,
     [
       name ?? user.name,
       email ?? user.email,
-      roleId ?? user.roleId,
+      nextRoleId,
       permissionOverrides !== undefined
         ? permissionOverrides
           ? JSON.stringify(permissionOverrides)
@@ -240,6 +283,7 @@ async function updateUser(
           : null,
       isActive ?? user.isActive,
       phone !== undefined ? phone || null : user.phone,
+      centerCheck.callCenterId,
       passwordHash ?? null,
       mustResetPassword ?? null,
       id,

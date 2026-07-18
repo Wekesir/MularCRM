@@ -246,7 +246,14 @@ function FileManagementPage() {
                           <FileText className="cm-client-avatar-icon" />
                         </span>
                         <div>
-                          <p className="cm-client-name">{f.fileName || `Batch #${f.id}`}</p>
+                          <button
+                            type="button"
+                            className="cm-client-name fm-file-name-btn"
+                            onClick={() => viewDebtors(f)}
+                            aria-label={`View debtors in ${f.fileName || `batch #${f.id}`}`}
+                          >
+                            {f.fileName || `Batch #${f.id}`}
+                          </button>
                           <p className="cm-client-type dm-cfid-sub">
                             CFID <code className="dm-cfid-badge dm-cfid-badge--sm">{f.id}</code>
                           </p>

@@ -15,7 +15,10 @@ router.use(requireCaseAssigner);
  */
 router.get('/', async (req, res) => {
   try {
-    const files = await listUnassignedFiles({ search: req.query.search || '' });
+    const files = await listUnassignedFiles({
+      search: req.query.search || '',
+      user: req.user,
+    });
     res.json(files);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load unassigned files', detail: error.message });

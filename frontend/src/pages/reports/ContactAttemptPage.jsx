@@ -1,12 +1,13 @@
 import { PhoneCall } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function ContactAttemptPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="contact-attempt"
       icon={PhoneCall}
       title="Contact Attempt"
-      description="Review the history of contact attempts made with debtors."
+      description="History of contact attempts with debtors"
     />
   );
 }

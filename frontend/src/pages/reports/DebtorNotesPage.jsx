@@ -1,12 +1,13 @@
 import { StickyNote } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function DebtorNotesPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="debtor-notes"
       icon={StickyNote}
       title="Debtor Notes"
-      description="Review notes logged against debtor accounts."
+      description="Notes logged against debtor accounts"
     />
   );
 }

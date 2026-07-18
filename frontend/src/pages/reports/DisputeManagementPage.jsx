@@ -1,12 +1,13 @@
 import { ShieldAlert } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function DisputeManagementPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="dispute-management"
       icon={ShieldAlert}
       title="Dispute Management"
-      description="Report on disputed accounts and their resolution status."
+      description="Disputed accounts by contact status and notes"
     />
   );
 }

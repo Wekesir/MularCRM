@@ -60,26 +60,6 @@ function formatMoney(value) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-function formatDateTime(value) {
-  if (!value) return null;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  const date = d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-  return { date, time };
-}
-
-function LastLoginCell({ value }) {
-  const parts = formatDateTime(value);
-  if (!parts) return <span className="ama-muted">Never</span>;
-  return (
-    <div className="ama-last-login">
-      <span className="ama-last-login-date">{parts.date}</span>
-      <span className="ama-last-login-time">{parts.time}</span>
-    </div>
-  );
-}
-
 function MetricCell({ value, isMoney, currencySymbol }) {
   const n = Number(value) || 0;
   if (n === 0) return <span className="ama-muted">0</span>;
@@ -256,27 +236,23 @@ function AgentManagementPage() {
       toast.info('Nothing to export');
       return;
     }
-    const rows = filtered.map((a, i) => {
-      const ll = formatDateTime(a.lastLogin);
-      return {
-        '#': i + 1,
-        'Agent Name': a.name || '',
-        Email: a.email || '',
-        'Last Login': ll ? `${ll.date} ${ll.time}` : 'Never',
-        Experience: a.experience || '',
-        Expertise: a.expertise || '',
-        Workload: a.workload || '',
-        Status: a.isActive ? 'Active' : 'Inactive',
-        'Files Assigned': a.filesAssigned || 0,
-        'Collections': a.collections || 0,
-        'PTP Amount': a.ptpAmount || 0,
-        'PTP Count': a.ptpCount || 0,
-        'Calls Made': a.callsMade || 0,
-        'SMS Sent': a.smsSent || 0,
-        'Emails Sent': a.emailsSent || 0,
-        'WhatsApp': a.whatsapp || 0,
-      };
-    });
+    const rows = filtered.map((a, i) => ({
+      '#': i + 1,
+      'Agent Name': a.name || '',
+      Email: a.email || '',
+      Experience: a.experience || '',
+      Expertise: a.expertise || '',
+      Workload: a.workload || '',
+      Status: a.isActive ? 'Active' : 'Inactive',
+      'Files Assigned': a.filesAssigned || 0,
+      Collections: a.collections || 0,
+      'PTP Amount': a.ptpAmount || 0,
+      'PTP Count': a.ptpCount || 0,
+      'Calls Made': a.callsMade || 0,
+      'SMS Sent': a.smsSent || 0,
+      'Emails Sent': a.emailsSent || 0,
+      WhatsApp: a.whatsapp || 0,
+    }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Agents');
@@ -321,7 +297,7 @@ function AgentManagementPage() {
     return () => setActions(null);
   }, [setActions, load, isSystemAdmin, navigate, showFilters, activeFilterCount, setShowFilters]);
 
-  const colCount = 12; // # + 10 data cols + actions
+  const colCount = isSystemAdmin ? 12 : 11; // # + agent + call center + 8 metrics (+ actions)
 
   return (
     <div className="cm-page">
@@ -443,7 +419,7 @@ function AgentManagementPage() {
               <tr>
                 <th className="cm-th cm-th-index">#</th>
                 <th className="cm-th">Agent Name</th>
-                <th className="cm-th">Last Login</th>
+                <th className="cm-th">Call Center</th>
                 <th className="cm-th cm-th-num">Files Assigned</th>
                 <th className="cm-th cm-th-num">Collections ({currencySymbol})</th>
                 <th className="cm-th cm-th-num">PTP Amount ({currencySymbol})</th>
@@ -499,7 +475,13 @@ function AgentManagementPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="cm-td"><LastLoginCell value={agent.lastLogin} /></td>
+                    <td className="cm-td">
+                      {agent.callCenterName ? (
+                        <span className="fm-chip">{agent.callCenterName}</span>
+                      ) : (
+                        <span className="dm-muted">Unbound</span>
+                      )}
+                    </td>
                     <td className="cm-td cm-td-num"><MetricCell value={agent.filesAssigned} /></td>
                     <td className="cm-td cm-td-num"><MetricCell value={agent.collections} isMoney currencySymbol={currencySymbol} /></td>
                     <td className="cm-td cm-td-num"><MetricCell value={agent.ptpAmount} isMoney currencySymbol={currencySymbol} /></td>

@@ -244,7 +244,7 @@ function UnassignedFilesPage() {
                       </div>
                       <h2 className="empty-state-title">All files assigned</h2>
                       <p className="empty-state-description">
-                        There are no open batch files with unassigned cases right now.
+                        There are no open batch files with unassigned cases right now. New uploads bound to your call center by a Senior Supervisor will show up here.
                       </p>
                     </div>
                   </td>

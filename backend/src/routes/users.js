@@ -219,6 +219,9 @@ router.put('/:id', async (req, res) => {
   try {
     const user = await updateUser(req.params.id, req.body);
     if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.error) {
+      return res.status(400).json({ message: user.error, code: user.code });
+    }
     res.json(user);
     recordActivityEvent({
       userId: req.user?.id,

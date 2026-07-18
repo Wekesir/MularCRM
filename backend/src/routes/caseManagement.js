@@ -20,7 +20,10 @@ router.use(requireAuth);
 // Per-client case aggregates that power the Case Management table.
 router.get('/', async (req, res) => {
   try {
-    const summary = await listClientCaseSummary({ search: req.query.search || '' });
+    const summary = await listClientCaseSummary({
+      search: req.query.search || '',
+      user: req.user,
+    });
     res.json(summary);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load case summary', detail: error.message });
@@ -30,7 +33,10 @@ router.get('/', async (req, res) => {
 // Batch files that still have unassigned cases — Unassigned Files module.
 router.get('/unassigned-files', requireCaseAssigner, async (req, res) => {
   try {
-    const files = await listUnassignedFiles({ search: req.query.search || '' });
+    const files = await listUnassignedFiles({
+      search: req.query.search || '',
+      user: req.user,
+    });
     res.json(files);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load unassigned files', detail: error.message });
@@ -41,9 +47,12 @@ router.get('/unassigned-files', requireCaseAssigner, async (req, res) => {
 // "View Files" button on a client row.
 router.get('/clients/:clientId/files', async (req, res) => {
   try {
-    const files = await listClientFiles(req.params.clientId);
+    const files = await listClientFiles(req.params.clientId, { user: req.user });
     res.json(files);
   } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Failed to load client files', detail: error.message });
   }
 });
@@ -51,10 +60,13 @@ router.get('/clients/:clientId/files', async (req, res) => {
 // Current per-agent allocation breakdown for a case file.
 router.get('/files/:fileId/allocation', async (req, res) => {
   try {
-    const allocation = await getFileAllocation(req.params.fileId);
+    const allocation = await getFileAllocation(req.params.fileId, { user: req.user });
     if (!allocation) return res.status(404).json({ message: 'Case file not found' });
     res.json(allocation);
   } catch (error) {
+    if (error.status === 403 || error.code === 'FORBIDDEN') {
+      return res.status(403).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Failed to load allocation', detail: error.message });
   }
 });
@@ -67,6 +79,9 @@ router.post('/files/:fileId/assign', requireCaseAssigner, async (req, res) => {
     });
     res.json(result);
   } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message });
+    }
     if (error.code === 'VALIDATION') return res.status(400).json({ message: error.message });
     if (error.code === 'NOT_FOUND') return res.status(404).json({ message: error.message });
     res.status(500).json({ message: 'Failed to assign agents', detail: error.message });

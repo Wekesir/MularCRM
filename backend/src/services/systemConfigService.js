@@ -6,6 +6,7 @@ const SECRET_FIELD_PATHS = [
   ['email', 'resendApiKey'],
   ['email', 'smtpPassword'],
   ['sms', 'apiKey'],
+  ['voice', 'apiKey'],
   ['backup', 'googleDrive', 'serviceAccountKey'],
 ];
 

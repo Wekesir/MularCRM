@@ -1,21 +1,17 @@
+/** Live sidebar reports under /reports/* (used by Report Access password admin). */
 export const reports = [
-  { slug: 'customer-account-statement', label: 'Customer Account Statement' },
-  { slug: 'loans-due-report', label: 'Loans Due Report' },
-  { slug: 'mpesa-repayments-report', label: 'MPesa Repayments Report' },
-  { slug: 'loan-officer-performance', label: 'Loan Officer Performance' },
-  { slug: 'non-performing-loans', label: 'Non-performing loans' },
-  { slug: 'outstanding-loan-balances-eom', label: 'Outstanding Loan Balances as at EOM' },
-  { slug: 'loans-pending-disbursement', label: 'Loans Pending Disbursement' },
-  { slug: 'loans-listing', label: 'Loans Listing' },
-  { slug: 'outstanding-loan-balances-report', label: 'Outstanding Loan Balances Report' },
-  { slug: 'suspense-payments-report', label: 'Suspense Payments Report' },
-  { slug: 'trace-mpesa-transaction', label: 'Trace Mpesa Transaction' },
-  { slug: 'inactive-customers', label: 'Inactive Customers' },
-  { slug: 'loan-arrears-report', label: 'Loan Arrears Report' },
-  { slug: 'loans-due-hq-report', label: 'Loans Due HQ Report' },
-  { slug: 'duplicate-loans-report', label: 'Duplicate Loans Report' },
-  { slug: 'hq-disbursed-loans', label: 'HQ Disbursed Loans' },
-  { slug: 'hq-customer-listing', label: 'HQ Customer Listing' },
+  { slug: 'debtor-summary', label: 'Debtor Summary' },
+  { slug: 'payment-performance', label: 'Payment Performance' },
+  { slug: 'collector-performance', label: 'Collector Performance' },
+  { slug: 'portfolio-performance', label: 'Portfolio Performance' },
+  { slug: 'promise-to-pay', label: 'Promise To Pay' },
+  { slug: 'aging-report', label: 'Aging Report' },
+  { slug: 'dispute-management', label: 'Dispute Management' },
+  { slug: 'recovery-rate', label: 'Recovery Rate' },
+  { slug: 'goip-calls-report', label: 'GOIP Calls Report' },
+  { slug: 'sms-report', label: 'SMS Report' },
+  { slug: 'debtor-notes', label: 'Debtor Notes' },
+  { slug: 'contact-attempt', label: 'Contact Attempt' },
 ];
 
 export const DEFAULT_REPORT_SLUG = reports[0].slug;
@@ -25,7 +21,7 @@ export function getReportBySlug(slug) {
 }
 
 export function getReportPath(slug) {
-  return `/reporting-analytics/${slug}`;
+  return `/reports/${slug}`;
 }
 
 export function slugToPermissionKey(slug) {

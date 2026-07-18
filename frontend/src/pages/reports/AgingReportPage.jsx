@@ -1,12 +1,13 @@
 import { Hourglass } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function AgingReportPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="aging-report"
       icon={Hourglass}
       title="Aging Report"
-      description="Break down outstanding balances by age bucket."
+      description="Outstanding balances by age bucket"
     />
   );
 }

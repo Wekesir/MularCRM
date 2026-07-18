@@ -1,12 +1,13 @@
 import { BarChart3 } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function PortfolioPerformancePage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="portfolio-performance"
       icon={BarChart3}
       title="Portfolio Performance"
-      description="Overview of portfolio health and recovery performance."
+      description="Portfolio health and recovery by client"
     />
   );
 }

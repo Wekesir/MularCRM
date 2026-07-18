@@ -11,6 +11,7 @@ import {
   Shield,
   ShieldCheck,
   ArchiveRestore,
+  Headset,
 } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import PermissionMatrix from '../pages/system-config/PermissionMatrix';
@@ -60,12 +61,20 @@ function ToggleCard({ title, description, checked, onChange }) {
   );
 }
 
+function roleNeedsCallCenter(roleName) {
+  const key = String(roleName || '')
+    .trim()
+    .toLowerCase();
+  return key === 'agent' || key === 'supervisor' || key === 'manager';
+}
+
 function UserFormModal({
   open,
   onClose,
   form,
   setForm,
   roles,
+  callCenters = [],
   registry,
   isSaving,
   onSave,
@@ -77,6 +86,7 @@ function UserFormModal({
   const firstInputRef = useRef(null);
   const isEditing = Boolean(form.id);
   const selectedRole = roles.find((r) => r.id === Number(form.roleId));
+  const needsCenter = roleNeedsCallCenter(selectedRole?.name);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -274,6 +284,25 @@ function UserFormModal({
               </select>
             </div>
           </FieldGroup>
+
+          {needsCenter && (
+            <FieldGroup label="Call Center" required icon={Headset}>
+              <div className="cf-select-wrap">
+                <select
+                  className="cf-select"
+                  value={form.callCenterId || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, callCenterId: e.target.value }))}
+                >
+                  <option value="">Select call center…</option>
+                  {callCenters.map((center) => (
+                    <option key={center.id} value={center.id}>
+                      {center.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </FieldGroup>
+          )}
 
           {/* Active account toggle */}
           <ToggleCard

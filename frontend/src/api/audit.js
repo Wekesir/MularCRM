@@ -29,14 +29,3 @@ export async function fetchAuditRecords(type, { search, dateFrom, dateTo, limit 
   return data;
 }
 
-export async function deleteAuditRecord(type, id) {
-  const { data } = await api.delete(`${resolvePath(type)}/${id}`);
-  return data;
-}
-
-export async function clearAuditRecords(type, { olderThanDays } = {}) {
-  const { data } = await api.delete(resolvePath(type), {
-    params: olderThanDays ? { olderThanDays } : {},
-  });
-  return data;
-}

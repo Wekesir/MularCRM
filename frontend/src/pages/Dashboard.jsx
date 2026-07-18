@@ -35,6 +35,8 @@ import { useSystemConfig } from '../context/SystemConfigContext';
 import { useTheme } from '../context/ThemeContext';
 import { usePermissions } from '../hooks/usePermissions';
 import AgentDashboard from './dashboard/AgentDashboard';
+import SeniorSupervisorDashboard from './dashboard/SeniorSupervisorDashboard';
+import SupervisorDashboard from './dashboard/SupervisorDashboard';
 import AgentPerformanceTable from './dashboard/AgentPerformanceTable';
 import RecentActivityFeed from './dashboard/RecentActivityFeed';
 
@@ -202,9 +204,50 @@ function OrgDashboard() {
   }
 
   const moneyPrefix = `${currencySymbol} `;
+  const callCenterOverview = data?.callCenterOverview;
 
   return (
     <div className="dashboard-page">
+      {callCenterOverview?.summary && (
+        <section className="stat-grid-compact" style={{ marginBottom: '1rem' }}>
+          <StatCard
+            icon={Building2}
+            numericValue={callCenterOverview.summary.activeCallCenters || 0}
+            label="Call Centers"
+            meta="Active mini centers"
+            accent="theme"
+            variant="compact"
+            className="dashboard-stat-card"
+          />
+          <StatCard
+            icon={UsersRound}
+            numericValue={callCenterOverview.summary.unassignedClients || 0}
+            label="Unassigned Clients"
+            meta="Awaiting center assignment"
+            accent="#f59e0b"
+            variant="compact"
+            className="dashboard-stat-card"
+          />
+          <StatCard
+            icon={UserCog}
+            numericValue={callCenterOverview.summary.supervisors || 0}
+            label="Supervisors"
+            meta="Call center managers"
+            accent="#8b5cf6"
+            variant="compact"
+            className="dashboard-stat-card"
+          />
+          <StatCard
+            icon={UsersRound}
+            numericValue={callCenterOverview.summary.agents || 0}
+            label="Agents"
+            meta="Collectors across centers"
+            accent="#10b981"
+            variant="compact"
+            className="dashboard-stat-card"
+          />
+        </section>
+      )}
       <section className="stat-grid-compact">
         <StatCard
           icon={UsersRound}
@@ -366,8 +409,10 @@ function OrgDashboard() {
 }
 
 function Dashboard() {
-  const { isAgent } = usePermissions();
+  const { isAgent, isSeniorSupervisor, isSupervisor, isSystemAdmin } = usePermissions();
   if (isAgent) return <AgentDashboard />;
+  if (isSeniorSupervisor && !isSystemAdmin) return <SeniorSupervisorDashboard />;
+  if (isSupervisor && !isSystemAdmin) return <SupervisorDashboard />;
   return <OrgDashboard />;
 }
 

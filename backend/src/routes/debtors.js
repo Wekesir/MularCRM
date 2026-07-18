@@ -20,19 +20,36 @@ const {
   BulkUploadError,
   MAX_DATA_ROWS,
 } = require('../services/debtorBulkUploadService');
-const { recordActivityEvent } = require('../services/activityService');
+const { recordActivityEvent, recordActivityEvents } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requireSystemAdmin } = require('../middleware/requireSystemAdmin');
+const { getUserEffectivePermissions } = require('../services/userService');
+const { isSeniorSupervisorRole } = require('../config/orgRoles');
 
 const router = express.Router();
 
 router.use(requireAuth);
+
+async function assertCanBulkUploadDebtors(user) {
+  if (!user) {
+    const err = new Error('Authentication required');
+    err.status = 401;
+    throw err;
+  }
+  if (user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
+  const perms = await getUserEffectivePermissions(user.id);
+  if (perms?.management?.debtor_management?.create) return;
+  const err = new Error('You do not have permission to upload debtor files');
+  err.status = 403;
+  throw err;
+}
 
 // Pull the advanced-filter params from the query string into a single object
 // shared by the list, totals, buckets, agents and export endpoints.
 function debtorFilters(req) {
   const q = req.query || {};
   return {
+    user: req.user || null,
     fileId: q.fileId || null,
     clientId: q.clientId || null,
     bucket: q.bucket || null,
@@ -132,9 +149,9 @@ router.get('/totals', async (req, res) => {
 // List bulk-upload batches (debtor_files) — used by the file filter on the
 // debtor management page. Registered before '/:id' so the literal "files"
 // segment is not captured as an id.
-router.get('/files', async (_req, res) => {
+router.get('/files', async (req, res) => {
   try {
-    const files = await listDebtorFiles();
+    const files = await listDebtorFiles({ user: req.user });
     res.json(files);
   } catch (error) {
     res.status(500).json({ message: 'Failed to list debtor files', detail: error.message });
@@ -146,7 +163,7 @@ router.get('/files', async (_req, res) => {
 // appearing in listings but the data is retained.
 router.delete('/files/:id', async (req, res) => {
   try {
-    const result = await softDeleteDebtorFile(req.params.id);
+    const result = await softDeleteDebtorFile(req.params.id, { user: req.user });
     if (!result.deleted) {
       return res.status(404).json({ message: 'File not found or already deleted.' });
     }
@@ -159,8 +176,31 @@ router.delete('/files/:id', async (req, res) => {
       entityType: 'debtor_file',
       entityId: String(result.fileId),
     }).catch(() => {});
+
+    const deletedDebtors = Array.isArray(result.debtors) ? result.debtors : [];
+    if (deletedDebtors.length > 0) {
+      recordActivityEvents(
+        deletedDebtors.map((d) => ({
+          userId: req.user?.id,
+          userName: req.user?.name,
+          actionType: 'debtor.soft_deleted',
+          title: 'Debtor Removed from Portfolio',
+          subject: d.name || `Debtor #${d.id}`,
+          entityType: 'debtor',
+          entityId: String(d.id),
+          metadata: {
+            fileId: result.fileId,
+            source: 'file_delete',
+          },
+        }))
+      ).catch(() => {});
+    }
+
     return res.json({ message: 'File and its debtors have been deleted.', fileId: result.fileId });
   } catch (error) {
+    if (error.status === 403 || error.code === 'FORBIDDEN') {
+      return res.status(403).json({ message: error.message });
+    }
     console.error('[debtors] file delete failed:', error);
     return res.status(500).json({ message: 'Failed to delete file', detail: error.message });
   }
@@ -183,6 +223,8 @@ router.get('/template', async (_req, res) => {
 
 router.post('/bulk-upload', upload.single('file'), async (req, res) => {
   try {
+    await assertCanBulkUploadDebtors(req.user);
+
     if (!req.file) {
       return res
         .status(400)
@@ -190,23 +232,33 @@ router.post('/bulk-upload', upload.single('file'), async (req, res) => {
     }
 
     // Form selections sent alongside the file (one batch → one client/category/type/currency).
-    // The batch file is auto-named clientName_debtCategory_date by the service.
+    // Call center is automatic when the client is already bound; otherwise required.
     const options = {
       clientId: req.body.clientId || null,
       debtCategoryId: req.body.debtCategoryId || null,
       debtTypeId: req.body.debtTypeId || null,
       currencyId: req.body.currencyId || null,
+      callCenterId: req.body.callCenterId || null,
+      forceCallCenter:
+        req.body.forceCallCenter === '1' ||
+        req.body.forceCallCenter === 'true' ||
+        req.body.forceCallCenter === true,
+      performedBy: req.user,
     };
 
     const result = await parseAndImportDebtors(req.file.buffer, req.user?.id, options);
-    // Per-debtor activity ("Debtor Imported") is recorded inside the bulk
-    // upload service, so we just return the result here.
     return res.status(200).json(result);
   } catch (error) {
+    if (error.status === 403 || error.status === 401) {
+      return res.status(error.status).json({ message: error.message });
+    }
     if (error instanceof BulkUploadError) {
       const status =
         error.code === 'INVALID_FILE' || error.code === 'INVALID_STRUCTURE' ? 400 : 422;
       return res.status(status).json({ message: error.message });
+    }
+    if (error.code === 'ALREADY_ASSIGNED' || error.code === 'FORBIDDEN' || error.code === 'VALIDATION') {
+      return res.status(error.status || 400).json({ message: error.message });
     }
     if (error instanceof multer.MulterError) {
       if (error.code === 'LIMIT_FILE_SIZE') {
@@ -228,20 +280,26 @@ router.post('/bulk-upload', upload.single('file'), async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const debtor = await getDebtorById(req.params.id);
+    const debtor = await getDebtorById(req.params.id, { user: req.user });
     if (!debtor) return res.status(404).json({ message: 'Debtor not found' });
     res.json(debtor);
   } catch (error) {
+    if (error.status === 403 || error.code === 'FORBIDDEN') {
+      return res.status(403).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Failed to get debtor', detail: error.message });
   }
 });
 
 router.get('/:id/history', async (req, res) => {
   try {
-    const result = await getDebtorHistory(req.params.id);
+    const result = await getDebtorHistory(req.params.id, { user: req.user });
     if (!result) return res.status(404).json({ message: 'Debtor not found' });
     res.json(result);
   } catch (error) {
+    if (error.status === 403 || error.code === 'FORBIDDEN') {
+      return res.status(403).json({ message: error.message });
+    }
     res
       .status(500)
       .json({ message: 'Failed to load debtor history', detail: error.message });

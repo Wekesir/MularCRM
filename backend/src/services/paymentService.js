@@ -251,6 +251,9 @@ async function recordBackfillPayment({
   currencyId,
   agentName,
   defaultRate,
+  debtorName = null,
+  userId = null,
+  recordActivity = true,
 }) {
   const amt = round2(Number(amount) || 0);
   if (amt <= 0) return null;
@@ -286,6 +289,24 @@ async function recordBackfillPayment({
     collectedAmount: amt,
     paymentDate: paymentDateVal,
   });
+
+  if (recordActivity) {
+    recordActivityEvent({
+      userId: userId != null ? Number(userId) || null : null,
+      actionType: 'payment.detected',
+      title: 'Opening Payment Recorded',
+      subject: debtorName || null,
+      entityType: 'debtor',
+      entityId: String(debtorId),
+      amount: amt,
+      metadata: {
+        source: 'backfill',
+        previousTotalPaid: 0,
+        newTotalPaid: amt,
+        paymentDate: paymentDateVal,
+      },
+    }).catch(() => {});
+  }
 
   return { paymentId, amount: amt };
 }

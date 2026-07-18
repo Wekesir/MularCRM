@@ -224,7 +224,15 @@ function AssignCasesModal({ open, onClose, file, onChanged, selectedDebtorIds })
     setReallocating(true);
     try {
       const result = await reallocateFileAgents(file.id, Number(reallocateFrom), Number(reallocateTo));
-      toast.success(`Reallocated ${result.reallocated} case(s).`);
+      if (!result.reallocated) {
+        toast.info(
+          `No cases moved from ${result.fromAgent?.name || 'source'} to ${result.toAgent?.name || 'target'}.`
+        );
+      } else {
+        toast.success(
+          `Reallocated ${result.reallocated} case(s) from ${result.fromAgent?.name} to ${result.toAgent?.name}.`
+        );
+      }
       setReallocateFrom('');
       setReallocateTo('');
       await loadAllocation();

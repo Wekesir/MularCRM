@@ -1,12 +1,13 @@
 import { Award } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function CollectorPerformancePage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="collector-performance"
       icon={Award}
       title="Collector Performance"
-      description="Compare collection performance across agents."
+      description="Compare collection performance across agents"
     />
   );
 }

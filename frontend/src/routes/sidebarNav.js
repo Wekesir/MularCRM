@@ -14,6 +14,7 @@ export const sidebarNav = [
       { path: '/management/file-management', label: 'File Management' },
       { path: '/management/closed-files', label: 'Closed Files' },
       { path: '/management/agent-management', label: 'Agent Management' },
+      { path: '/management/call-centers', label: 'Call Centers' },
     ],
   },
   {
@@ -22,6 +23,7 @@ export const sidebarNav = [
     label: 'Case Management',
     children: [
       { path: '/case-management', label: 'All Cases' },
+      { path: '/case-management/my-portfolio', label: 'My Portfolio' },
       {
         path: '/case-management/unassigned-files',
         label: 'Unassigned Files',
@@ -88,7 +90,7 @@ export const sidebarNav = [
       { path: '/settings/case-priority', label: 'Case Priority' },
       { path: '/settings/agent-experience', label: 'Agent Experience' },
       { path: '/settings/agent-expertise', label: 'Agent Expertise' },
-      { path: '/settings/client-agents', label: 'Client Agents' },
+      { path: '/settings/client-agents', label: 'Client Call Centers' },
       { path: '/settings/workload-parameters', label: 'Workload Parameters' },
       { path: '/settings/contactability', label: 'Contactability' },
       { path: '/settings/contact-type', label: 'Contact Type' },

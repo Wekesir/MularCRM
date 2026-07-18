@@ -1,5 +1,10 @@
 const pool = require('../db/pool');
 const { isValidWorkload } = require('./agentAttributes');
+const {
+  AGENT_ROLE_NAMES,
+  isAgentRole,
+  resolveCallCenterScope,
+} = require('../config/orgRoles');
 
 function normalizeAgent(row) {
   return {
@@ -9,11 +14,12 @@ function normalizeAgent(row) {
     phone: row.phone || null,
     roleName: row.role_name,
     isActive: Boolean(row.is_active),
+    callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
+    callCenterName: row.call_center_name || null,
     experience: row.experience || null,
     expertise: row.expertise || null,
     workload: row.workload || null,
     updatedAt: row.profile_updated_at || row.updated_at,
-    // Performance metrics (nullable when no data yet)
     lastLogin: row.last_login || null,
     filesAssigned: Number(row.files_assigned) || 0,
     collections: Number(row.collections) || 0,
@@ -26,23 +32,35 @@ function normalizeAgent(row) {
   };
 }
 
-const AGENT_ROLE_NAMES = ['Agent'];
-
-/** True when the user has the collection Agent role (not Manager/Admin/etc.). */
-function isAgentRole(userOrRoleName) {
-  const name =
-    typeof userOrRoleName === 'string'
-      ? userOrRoleName
-      : userOrRoleName?.roleName;
-  return AGENT_ROLE_NAMES.some(
-    (r) => String(name || '').trim().toLowerCase() === r.toLowerCase()
-  );
-}
-
-async function listAgents({ experience, expertise, workload, search } = {}) {
+async function listAgents({
+  experience,
+  expertise,
+  workload,
+  search,
+  callCenterId,
+  user = null,
+} = {}) {
   const params = [];
   const where = ['r.name IN (?)', 'u.deleted_at IS NULL'];
   params.push(AGENT_ROLE_NAMES);
+
+  const scope = user
+    ? resolveCallCenterScope(user, { callCenterId })
+    : {
+        mode: 'company',
+        callCenterId:
+          callCenterId != null && callCenterId !== '' ? Number(callCenterId) : null,
+      };
+
+  if (scope.mode === 'none') return [];
+  if (scope.mode === 'center') {
+    if (!scope.callCenterId) return [];
+    where.push('u.call_center_id = ?');
+    params.push(scope.callCenterId);
+  } else if (scope.callCenterId) {
+    where.push('u.call_center_id = ?');
+    params.push(scope.callCenterId);
+  }
 
   if (experience) {
     where.push('ap.experience = ?');
@@ -63,8 +81,9 @@ async function listAgents({ experience, expertise, workload, search } = {}) {
   }
 
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.updated_at,
+    `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.updated_at, u.call_center_id,
             r.name AS role_name,
+            cc.name AS call_center_name,
             ap.experience, ap.expertise, ap.workload, ap.updated_at AS profile_updated_at,
             (SELECT MAX(la.login_at) FROM login_audit la
               WHERE la.user_id = u.id AND la.status = 'success') AS last_login,
@@ -88,6 +107,7 @@ async function listAgents({ experience, expertise, workload, search } = {}) {
               WHERE al.user_id = u.id AND al.action_type LIKE 'whatsapp%') AS whatsapp_count
      FROM users u
      JOIN roles r ON u.role_id = r.id
+     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
      LEFT JOIN agent_profiles ap ON ap.user_id = u.id
      WHERE ${where.join(' AND ')}
      ORDER BY u.name ASC`,
@@ -99,11 +119,13 @@ async function listAgents({ experience, expertise, workload, search } = {}) {
 
 async function getAgentById(id) {
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.updated_at,
+    `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.updated_at, u.call_center_id,
             r.name AS role_name,
+            cc.name AS call_center_name,
             ap.experience, ap.expertise, ap.workload, ap.updated_at AS profile_updated_at
      FROM users u
      JOIN roles r ON u.role_id = r.id
+     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
      LEFT JOIN agent_profiles ap ON ap.user_id = u.id
      WHERE u.id = ? AND r.name IN (?) AND u.deleted_at IS NULL
      LIMIT 1`,

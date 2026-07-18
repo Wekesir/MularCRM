@@ -10,6 +10,7 @@ import {
   updateUser,
 } from '../../api/users';
 import { fetchPermissionRegistry, fetchRoles } from '../../api/accessControl';
+import { fetchCallCenters } from '../../api/callCenters';
 import { usePageActions } from '../../context/PageActionsContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -63,10 +64,12 @@ function UsersPage() {
     phone: '',
     password: '',
     roleId: '',
+    callCenterId: '',
     isActive: true,
     customizePermissions: false,
     permissionOverrides: null,
   });
+  const [callCenters, setCallCenters] = useState([]);
   const [loadingAction, setLoadingAction] = useState(null);
   const [usersRefreshKey, setUsersRefreshKey] = useState(0);
   const [deletedUsersRefreshKey, setDeletedUsersRefreshKey] = useState(0);
@@ -77,10 +80,11 @@ function UsersPage() {
   const isSavingUser = loadingAction === 'save-user';
 
   useEffect(() => {
-    Promise.all([fetchPermissionRegistry(), fetchRoles()])
-      .then(([registryData, rolesData]) => {
+    Promise.all([fetchPermissionRegistry(), fetchRoles(), fetchCallCenters({ includeInactive: false })])
+      .then(([registryData, rolesData, centersData]) => {
         setRegistry(registryData);
         setRoles(rolesData);
+        setCallCenters(Array.isArray(centersData) ? centersData : []);
       })
       .catch(() => toast.error('Failed to load user management data'));
   }, []);
@@ -102,6 +106,7 @@ function UsersPage() {
         phone: user.phone || '',
         password: '',
         roleId: user.roleId,
+        callCenterId: user.callCenterId || '',
         isActive: user.isActive,
         customizePermissions: Boolean(user.permissionOverrides),
         permissionOverrides: user.permissionOverrides || buildEmptyPermissions(registry),
@@ -121,6 +126,7 @@ function UsersPage() {
       phone: '',
       password: '',
       roleId: roles[0]?.id || '',
+      callCenterId: '',
       isActive: true,
       customizePermissions: false,
       permissionOverrides: buildEmptyPermissions(registry),
@@ -166,11 +172,23 @@ function UsersPage() {
       return;
     }
 
+    const selectedRole = roles.find((r) => r.id === Number(userForm.roleId));
+    const roleNeedsCenter = ['agent', 'supervisor', 'manager'].includes(
+      String(selectedRole?.name || '')
+        .trim()
+        .toLowerCase()
+    );
+    if (roleNeedsCenter && !userForm.callCenterId) {
+      toast.error('Call center is required for Agents and Supervisors');
+      return;
+    }
+
     const payload = {
       name: userForm.name,
       email: userForm.email,
       phone: userForm.phone.trim() || null,
       roleId: Number(userForm.roleId),
+      callCenterId: roleNeedsCenter ? Number(userForm.callCenterId) : null,
       isActive: userForm.isActive,
       permissionOverrides: userForm.customizePermissions ? userForm.permissionOverrides : null,
     };
@@ -477,6 +495,7 @@ function UsersPage() {
         form={userForm}
         setForm={setUserForm}
         roles={roles}
+        callCenters={callCenters}
         registry={registry}
         isSaving={isSavingUser}
         onSave={handleSaveUser}

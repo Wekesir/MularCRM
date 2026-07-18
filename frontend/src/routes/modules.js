@@ -9,12 +9,14 @@ import DebtorManagementPage from '../pages/management/DebtorManagementPage';
 import FileManagementPage from '../pages/management/FileManagementPage';
 import ClosedFilesPage from '../pages/management/ClosedFilesPage';
 import AgentManagementPage from '../pages/management/AgentManagementPage';
+import CallCentersPage from '../pages/management/CallCentersPage';
 
 // Case Management
 import CaseManagementPage from '../pages/CaseManagementPage';
 import ClientFilesPage from '../pages/ClientFilesPage';
 import FileCasesPage from '../pages/case-management/FileCasesPage.jsx';
 import UnassignedFilesPage from '../pages/case-management/UnassignedFilesPage.jsx';
+import MyPortfolioPage from '../pages/case-management/MyPortfolioPage.jsx';
 
 // Communication
 import BulkSmsPage from '../pages/communication/BulkSmsPage';
@@ -73,8 +75,14 @@ export const modules = [
   { path: '/management/file-management', label: 'File Management', component: FileManagementPage },
   { path: '/management/closed-files', label: 'Closed Files', component: ClosedFilesPage },
   { path: '/management/agent-management', label: 'Agent Management', component: AgentManagementPage },
+  { path: '/management/call-centers', label: 'Call Centers', component: CallCentersPage },
 
   { path: '/case-management', label: 'Case Management', component: CaseManagementPage },
+  {
+    path: '/case-management/my-portfolio',
+    label: 'My Portfolio',
+    component: MyPortfolioPage,
+  },
   {
     path: '/case-management/unassigned-files',
     label: 'Unassigned Files',
@@ -119,7 +127,7 @@ export const modules = [
   { path: '/settings/case-priority', label: 'Case Priority', component: CasePriorityPage },
   { path: '/settings/agent-experience', label: 'Agent Experience', component: AgentExperiencePage },
   { path: '/settings/agent-expertise', label: 'Agent Expertise', component: AgentExpertisePage },
-  { path: '/settings/client-agents', label: 'Client Agents', component: ClientAgentsPage },
+  { path: '/settings/client-agents', label: 'Client Call Centers', component: ClientAgentsPage },
   { path: '/settings/workload-parameters', label: 'Workload Parameters', component: WorkloadParametersPage },
   { path: '/settings/contactability', label: 'Contactability', component: ContactabilityPage },
   { path: '/settings/contact-type', label: 'Contact Type', component: ContactTypePage },

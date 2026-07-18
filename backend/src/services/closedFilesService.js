@@ -1,4 +1,5 @@
 const pool = require('../db/pool');
+const { resolveCallCenterScope } = require('../config/orgRoles');
 
 function toNumber(value) {
   const n = Number(value);
@@ -47,6 +48,20 @@ const SELECT = `
 function buildWhere(f = {}) {
   const params = [];
   const clauses = ['d.deleted_at IS NULL', 'd.is_closed = 1'];
+
+  if (f.user) {
+    const scope = resolveCallCenterScope(f.user);
+    if (scope.mode === 'none') {
+      clauses.push('1=0');
+    } else if (scope.mode === 'center') {
+      if (!scope.callCenterId) {
+        clauses.push('1=0');
+      } else {
+        clauses.push('COALESCE(df.call_center_id, c.call_center_id) = ?');
+        params.push(scope.callCenterId);
+      }
+    }
+  }
 
   if (f.clientId != null && f.clientId !== '') {
     clauses.push('d.client_id = ?');
@@ -99,7 +114,11 @@ async function listClosedDebtors(filters = {}) {
   const offset = Math.max(0, (Number(page) - 1) * limit);
 
   const [[{ total }]] = await pool.query(
-    `SELECT COUNT(*) AS total FROM debtors d LEFT JOIN clients c ON c.id = d.client_id ${where}`,
+    `SELECT COUNT(*) AS total
+     FROM debtors d
+     LEFT JOIN clients c ON c.id = d.client_id
+     LEFT JOIN debtor_files df ON df.id = d.file_id
+     ${where}`,
     params
   );
   const [rows] = await pool.query(
@@ -141,7 +160,10 @@ async function getClosedDebtorTotals(filters = {}) {
             COALESCE(SUM(d.loan_amount), 0) AS loan_amount,
             COALESCE(SUM(d.total_paid), 0) AS total_paid,
             COALESCE(SUM(d.outstanding_balance), 0) AS outstanding
-     FROM debtors d LEFT JOIN clients c ON c.id = d.client_id ${where}`,
+     FROM debtors d
+     LEFT JOIN clients c ON c.id = d.client_id
+     LEFT JOIN debtor_files df ON df.id = d.file_id
+     ${where}`,
     params
   );
   return {

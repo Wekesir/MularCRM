@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
+  ArrowRight,
   Briefcase,
   CalendarCheck2,
   CircleDollarSign,
@@ -42,11 +44,11 @@ const PERIODS = [
 ];
 
 const KPI_META = {
-  calls:      { color: 'var(--theme-color)', icon: Phone },
-  collection: { color: '#10b981',            icon: Coins },
-  sms:        { color: '#06b6d4',            icon: MessageSquare },
-  emails:     { color: '#8b5cf6',            icon: Mail },
-  ptpVolume:  { color: '#f59e0b',            icon: CalendarCheck2 },
+  calls: { color: 'var(--theme-color)', icon: Phone },
+  collection: { color: '#10b981', icon: Coins },
+  sms: { color: '#06b6d4', icon: MessageSquare },
+  emails: { color: '#8b5cf6', icon: Mail },
+  ptpVolume: { color: '#f59e0b', icon: CalendarCheck2 },
 };
 
 function getGreeting() {
@@ -77,7 +79,9 @@ function KpiRing({ progress, color, size = 80 }) {
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="adash-kpi-ring-svg" aria-hidden="true">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--bg-elevated)" strokeWidth={7} />
       <circle
-        cx={size / 2} cy={size / 2} r={r}
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
         fill="none"
         stroke={color}
         strokeWidth={7}
@@ -94,12 +98,17 @@ function KpiRing({ progress, color, size = 80 }) {
 /** Animated count-up stat inside the hero banner */
 function HeroStat({ label, value, prefix = '', suffix = '', decimals = 0 }) {
   const raw = useCountUp(Number(value) || 0, { decimals, duration: 1200 });
-  const display = decimals > 0
-    ? raw.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
-    : Math.round(raw).toLocaleString();
+  const display =
+    decimals > 0
+      ? raw.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+      : Math.round(raw).toLocaleString();
   return (
     <div className="adash-hero-stat">
-      <p className="adash-hero-stat-value">{prefix}{display}{suffix}</p>
+      <p className="adash-hero-stat-value">
+        {prefix}
+        {display}
+        {suffix}
+      </p>
       <p className="adash-hero-stat-label">{label}</p>
     </div>
   );
@@ -137,19 +146,24 @@ function AgentDashboard() {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const load = useCallback(async ({ silent = false } = {}) => {
-    if (!silent) setIsLoading(true);
-    try {
-      const payload = await fetchAgentDashboard({ period });
-      setData(payload);
-    } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to load your dashboard');
-    } finally {
-      if (!silent) setIsLoading(false);
-    }
-  }, [period]);
+  const load = useCallback(
+    async ({ silent = false } = {}) => {
+      if (!silent) setIsLoading(true);
+      try {
+        const payload = await fetchAgentDashboard({ period });
+        setData(payload);
+      } catch (error) {
+        toast.error(error.response?.data?.message || 'Failed to load your dashboard');
+      } finally {
+        if (!silent) setIsLoading(false);
+      }
+    },
+    [period]
+  );
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const handleRefresh = useCallback(() => {
     load();
@@ -186,10 +200,18 @@ function AgentDashboard() {
   const agentName = data?.agent?.name || '';
 
   const firstName = agentName ? agentName.trim().split(' ')[0] : '';
-
   const periodLabel = PERIODS.find((p) => p.value === period)?.label || 'Today';
 
-  const caseStatusTotal = useMemo(
+  const contactsMade = useMemo(
+    () =>
+      (Number(activity?.calls) || 0) +
+      (Number(activity?.sms) || 0) +
+      (Number(activity?.emails) || 0) +
+      (Number(activity?.whatsapp) || 0),
+    [activity]
+  );
+
+  const portfolioTotal = useMemo(
     () => (charts?.caseStatus?.values || []).reduce((s, v) => s + (Number(v) || 0), 0),
     [charts]
   );
@@ -198,14 +220,16 @@ function AgentDashboard() {
     const palette = getChartPalette();
     return {
       labels: charts?.caseStatus?.labels || [],
-      datasets: [{
-        data: charts?.caseStatus?.values || [],
-        backgroundColor: ['#f59e0b', palette[0], '#16a34a'],
-        borderColor: 'transparent',
-        borderWidth: 0,
-        hoverOffset: 6,
-        spacing: 2,
-      }],
+      datasets: [
+        {
+          data: charts?.caseStatus?.values || [],
+          backgroundColor: ['#f59e0b', palette[0], '#16a34a'],
+          borderColor: 'transparent',
+          borderWidth: 0,
+          hoverOffset: 6,
+          spacing: 2,
+        },
+      ],
     };
   }, [charts, colorMode, themeColor]);
 
@@ -213,42 +237,54 @@ function AgentDashboard() {
     const palette = getChartPalette();
     return {
       labels: charts?.contactMix?.labels || [],
-      datasets: [{
-        data: charts?.contactMix?.values || [],
-        backgroundColor: [palette[0], '#06b6d4', '#8b5cf6', '#10b981'],
-        borderColor: 'transparent',
-        borderWidth: 0,
-        hoverOffset: 6,
-        spacing: 2,
-      }],
+      datasets: [
+        {
+          data: charts?.contactMix?.values || [],
+          backgroundColor: [palette[0], '#06b6d4', '#8b5cf6', '#10b981'],
+          borderColor: 'transparent',
+          borderWidth: 0,
+          hoverOffset: 6,
+          spacing: 2,
+        },
+      ],
     };
   }, [charts, colorMode, themeColor]);
 
-  const collectionData = useMemo(() => ({
-    labels: charts?.collectionTrend?.labels || [],
-    datasets: [createChartDataset({
-      label: 'Collections',
-      data: charts?.collectionTrend?.values || [],
-      type: 'bar',
-      colorIndex: 1,
-    })],
-  }), [charts, colorMode, themeColor]);
+  const collectionData = useMemo(
+    () => ({
+      labels: charts?.collectionTrend?.labels || [],
+      datasets: [
+        createChartDataset({
+          label: 'Collections',
+          data: charts?.collectionTrend?.values || [],
+          type: 'bar',
+          colorIndex: 1,
+        }),
+      ],
+    }),
+    [charts, colorMode, themeColor]
+  );
 
-  const contactTrendData = useMemo(() => ({
-    labels: charts?.contactTrend?.labels || [],
-    datasets: [createChartDataset({
-      label: 'Contacts',
-      data: charts?.contactTrend?.values || [],
-      type: 'line',
-      colorIndex: 0,
-      fill: true,
-    })],
-  }), [charts, colorMode, themeColor]);
+  const contactTrendData = useMemo(
+    () => ({
+      labels: charts?.contactTrend?.labels || [],
+      datasets: [
+        createChartDataset({
+          label: 'Contacts',
+          data: charts?.contactTrend?.values || [],
+          type: 'line',
+          colorIndex: 0,
+          fill: true,
+        }),
+      ],
+    }),
+    [charts, colorMode, themeColor]
+  );
 
   const centerTextPlugin = useMemo(() => {
     const colors = getThemeColors(colorMode);
     return {
-      id: 'agentCaseStatusCenter',
+      id: 'agentPortfolioStatusCenter',
       afterDraw(chart) {
         const { ctx, chartArea } = chart;
         if (!chartArea) return;
@@ -259,14 +295,14 @@ function AgentDashboard() {
         ctx.textBaseline = 'middle';
         ctx.font = '700 1.75rem system-ui, -apple-system, sans-serif';
         ctx.fillStyle = colors.tooltipText;
-        ctx.fillText(String(caseStatusTotal), cx, cy - 10);
+        ctx.fillText(String(portfolioTotal), cx, cy - 10);
         ctx.font = '500 0.75rem system-ui, -apple-system, sans-serif';
         ctx.fillStyle = colors.textMuted;
-        ctx.fillText('My Cases', cx, cy + 14);
+        ctx.fillText('Portfolio', cx, cy + 14);
         ctx.restore();
       },
     };
-  }, [colorMode, caseStatusTotal]);
+  }, [colorMode, portfolioTotal]);
 
   const doughnutOptions = useChartOptions({
     scales: false,
@@ -280,7 +316,7 @@ function AgentDashboard() {
     animation: {
       duration: 1100,
       easing: 'easeOutQuart',
-      delay: (ctx) => ctx.type === 'data' && ctx.mode === 'default' ? ctx.dataIndex * 70 : 0,
+      delay: (ctx) => (ctx.type === 'data' && ctx.mode === 'default' ? ctx.dataIndex * 70 : 0),
     },
   });
 
@@ -291,78 +327,58 @@ function AgentDashboard() {
 
   if (isLoading && !data) return <DashSkeleton />;
 
-  const hasCases = (summary?.assignedCases || 0) > 0;
   const todayFormatted = new Date().toLocaleDateString(undefined, {
-    weekday: 'long', day: 'numeric', month: 'long',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
   });
 
   return (
     <div className="dashboard-page agent-dashboard">
-
-      {/* ── Hero Banner ───────────────────────────────────── */}
+      {/* ── Hero ─────────────────────────────────────────── */}
       <div className="adash-hero">
         <div className="adash-hero-deco adash-hero-deco--1" aria-hidden="true" />
         <div className="adash-hero-deco adash-hero-deco--2" aria-hidden="true" />
         <div className="adash-hero-inner">
           <div className="adash-hero-left">
+            <p className="adash-hero-eyebrow">{todayFormatted}</p>
             <p className="adash-hero-greeting">
-              {getGreeting()}{firstName ? `, ${firstName}` : ''}
+              {getGreeting()}
+              {firstName ? `, ${firstName}` : ''}
             </p>
-            <p className="adash-hero-date">{todayFormatted} · {periodLabel} view</p>
+            <p className="adash-hero-date">
+              Your {periodLabel.toLowerCase()} performance at a glance
+            </p>
+            <div className="adash-hero-actions">
+              <Link to="/case-management/my-portfolio" className="adash-hero-cta">
+                <Briefcase className="icon-sm" aria-hidden="true" />
+                My Portfolio
+                <ArrowRight className="icon-sm" aria-hidden="true" />
+              </Link>
+              <Link to="/payments/ptp" className="adash-hero-cta adash-hero-cta--ghost">
+                <CalendarCheck2 className="icon-sm" aria-hidden="true" />
+                PTP
+              </Link>
+            </div>
           </div>
-          <div className="adash-hero-stats" aria-label="Key metrics">
-            <HeroStat label="Assigned Cases" value={summary?.assignedCases} />
-            <div className="adash-hero-divider" aria-hidden="true" />
-            <HeroStat label="Recovery Rate" value={summary?.recoveryRate} suffix="%" decimals={1} />
-            <div className="adash-hero-divider" aria-hidden="true" />
+          <div className="adash-hero-stats" aria-label="Key performance metrics">
             <HeroStat
               label={`${periodLabel}'s Collections`}
               value={summary?.periodCollected}
               prefix={`${currencySymbol} `}
             />
+            <div className="adash-hero-divider" aria-hidden="true" />
+            <HeroStat label="Recovery Rate" value={summary?.recoveryRate} suffix="%" decimals={1} />
+            <div className="adash-hero-divider" aria-hidden="true" />
+            <HeroStat label="Active PTPs" value={summary?.ptpCount} />
+            <div className="adash-hero-divider" aria-hidden="true" />
+            <HeroStat label="Contacts Made" value={contactsMade} />
           </div>
         </div>
       </div>
 
-      {/* ── Empty state (no cases) ─────────────────────── */}
-      {!hasCases && (
-        <div className="empty-state-card">
-          <div className="empty-state-icon">
-            <Briefcase className="empty-state-icon-svg" />
-          </div>
-          <h2 className="empty-state-title">No cases assigned yet</h2>
-          <p className="empty-state-description">
-            Once a supervisor assigns cases to you, your portfolio stats and charts will appear here.
-          </p>
-        </div>
-      )}
-
-      {/* ── Contact Activity Strip ─────────────────────── */}
-      <div className="adash-activity-strip" role="group" aria-label="Period activity summary">
-        <div className="adash-activity-pill adash-activity-pill--calls">
-          <Phone className="icon-sm" aria-hidden="true" />
-          <span className="adash-activity-pill-count">{(activity?.calls || 0).toLocaleString()}</span>
-          <span className="adash-activity-pill-label">Calls</span>
-        </div>
-        <div className="adash-activity-pill adash-activity-pill--sms">
-          <MessageSquare className="icon-sm" aria-hidden="true" />
-          <span className="adash-activity-pill-count">{(activity?.sms || 0).toLocaleString()}</span>
-          <span className="adash-activity-pill-label">SMS</span>
-        </div>
-        <div className="adash-activity-pill adash-activity-pill--email">
-          <Mail className="icon-sm" aria-hidden="true" />
-          <span className="adash-activity-pill-count">{(activity?.emails || 0).toLocaleString()}</span>
-          <span className="adash-activity-pill-label">Email</span>
-        </div>
-        <div className="adash-activity-pill adash-activity-pill--whatsapp">
-          <MessageSquare className="icon-sm" aria-hidden="true" />
-          <span className="adash-activity-pill-count">{(activity?.whatsapp || 0).toLocaleString()}</span>
-          <span className="adash-activity-pill-label">WhatsApp</span>
-        </div>
-      </div>
-
-      {/* ── Portfolio Stats ────────────────────────────── */}
-      <section className="adash-stats-grid">
+      {/* ── Portfolio Stats ──────────────────────────────── */}
+      <section className="adash-stats-grid" aria-label="Portfolio financials">
         <StatCard
           icon={Coins}
           numericValue={summary?.collected || 0}
@@ -407,61 +423,113 @@ function AgentDashboard() {
         />
       </section>
 
-      {/* ── KPI Progress Rings ─────────────────────────── */}
-      <section className="agent-kpi-section">
-        <SectionHeader icon={Target} title="KPI Progress" count={kpiItems.length} />
-        <div className="adash-kpi-grid">
-          {kpiItems.map((item, index) => {
-            const meta = KPI_META[item.key] || { color: 'var(--theme-color)', icon: Target };
-            const IconComp = meta.icon;
-            const isComplete = (item.progress || 0) >= 100;
-            return (
-              <article
-                key={item.key}
-                className={`adash-kpi-card dashboard-stat-card${isComplete ? ' is-complete' : ''}`}
-                style={{ '--card-index': 4 + index, '--kpi-color': meta.color }}
-              >
-                <div className="adash-kpi-ring-wrap">
-                  <KpiRing
-                    progress={item.progress}
-                    color={isComplete ? '#16a34a' : meta.color}
-                    size={76}
-                  />
-                  <div className="adash-kpi-ring-center" aria-hidden="true">
-                    <span className="adash-kpi-ring-pct">
-                      {Math.round(item.progress || 0)}
-                      <span className="adash-kpi-ring-pct-sym">%</span>
-                    </span>
-                  </div>
-                </div>
-                <div className="adash-kpi-card-body">
-                  <div className="adash-kpi-card-label-row">
-                    <span className="adash-kpi-icon-wrap" aria-hidden="true">
-                      <IconComp className="icon-sm" />
-                    </span>
-                    <span className="adash-kpi-name">{item.label}</span>
-                  </div>
-                  <p className="adash-kpi-actual">
-                    {item.kind === 'money'
-                      ? formatMoney(item.actual, currencySymbol)
-                      : Number(item.actual || 0).toLocaleString()}
-                  </p>
-                  <p className="adash-kpi-target">
-                    Target:{' '}
-                    {item.kind === 'money'
-                      ? formatMoney(item.target, currencySymbol)
-                      : Number(item.target || 0).toLocaleString()}
-                  </p>
-                </div>
-              </article>
-            );
-          })}
+      {/* ── Contact Activity ─────────────────────────────── */}
+      <section aria-label="Contact activity">
+        <SectionHeader icon={Phone} title="Contact Activity" count={contactsMade} />
+        <div className="adash-activity-strip" role="group" aria-label={`${periodLabel} contact summary`}>
+          <div className="adash-activity-pill adash-activity-pill--calls">
+            <span className="adash-activity-pill-icon" aria-hidden="true">
+              <Phone className="icon-sm" />
+            </span>
+            <div className="adash-activity-pill-text">
+              <span className="adash-activity-pill-count">
+                {(activity?.calls || 0).toLocaleString()}
+              </span>
+              <span className="adash-activity-pill-label">Calls</span>
+            </div>
+          </div>
+          <div className="adash-activity-pill adash-activity-pill--sms">
+            <span className="adash-activity-pill-icon" aria-hidden="true">
+              <MessageSquare className="icon-sm" />
+            </span>
+            <div className="adash-activity-pill-text">
+              <span className="adash-activity-pill-count">
+                {(activity?.sms || 0).toLocaleString()}
+              </span>
+              <span className="adash-activity-pill-label">SMS</span>
+            </div>
+          </div>
+          <div className="adash-activity-pill adash-activity-pill--email">
+            <span className="adash-activity-pill-icon" aria-hidden="true">
+              <Mail className="icon-sm" />
+            </span>
+            <div className="adash-activity-pill-text">
+              <span className="adash-activity-pill-count">
+                {(activity?.emails || 0).toLocaleString()}
+              </span>
+              <span className="adash-activity-pill-label">Email</span>
+            </div>
+          </div>
+          <div className="adash-activity-pill adash-activity-pill--whatsapp">
+            <span className="adash-activity-pill-icon" aria-hidden="true">
+              <MessageSquare className="icon-sm" />
+            </span>
+            <div className="adash-activity-pill-text">
+              <span className="adash-activity-pill-count">
+                {(activity?.whatsapp || 0).toLocaleString()}
+              </span>
+              <span className="adash-activity-pill-label">WhatsApp</span>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* ── Charts ─────────────────────────────────────── */}
+      {/* ── KPI Progress ─────────────────────────────────── */}
+      {kpiItems.length > 0 && (
+        <section className="agent-kpi-section">
+          <SectionHeader icon={Target} title="KPI Progress" count={kpiItems.length} />
+          <div className="adash-kpi-grid">
+            {kpiItems.map((item, index) => {
+              const meta = KPI_META[item.key] || { color: 'var(--theme-color)', icon: Target };
+              const IconComp = meta.icon;
+              const isComplete = (item.progress || 0) >= 100;
+              return (
+                <article
+                  key={item.key}
+                  className={`adash-kpi-card dashboard-stat-card${isComplete ? ' is-complete' : ''}`}
+                  style={{ '--card-index': 4 + index, '--kpi-color': meta.color }}
+                >
+                  <div className="adash-kpi-ring-wrap">
+                    <KpiRing
+                      progress={item.progress}
+                      color={isComplete ? '#16a34a' : meta.color}
+                      size={76}
+                    />
+                    <div className="adash-kpi-ring-center" aria-hidden="true">
+                      <span className="adash-kpi-ring-pct">
+                        {Math.round(item.progress || 0)}
+                        <span className="adash-kpi-ring-pct-sym">%</span>
+                      </span>
+                    </div>
+                  </div>
+                  <div className="adash-kpi-card-body">
+                    <div className="adash-kpi-card-label-row">
+                      <span className="adash-kpi-icon-wrap" aria-hidden="true">
+                        <IconComp className="icon-sm" />
+                      </span>
+                      <span className="adash-kpi-name">{item.label}</span>
+                    </div>
+                    <p className="adash-kpi-actual">
+                      {item.kind === 'money'
+                        ? formatMoney(item.actual, currencySymbol)
+                        : Number(item.actual || 0).toLocaleString()}
+                    </p>
+                    <p className="adash-kpi-target">
+                      Target:{' '}
+                      {item.kind === 'money'
+                        ? formatMoney(item.target, currencySymbol)
+                        : Number(item.target || 0).toLocaleString()}
+                    </p>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* ── Charts ───────────────────────────────────────── */}
       <section className="chart-grid-agent">
-        {/* Collection bar chart — takes 2fr at desktop */}
         <ChartCard
           title="Collection Trend"
           description={`${periodLabel} confirmed collections`}
@@ -472,10 +540,9 @@ function AgentDashboard() {
           <Bar data={collectionData} options={collectionOptions} />
         </ChartCard>
 
-        {/* Two doughnuts stacked in 1fr right column */}
         <div className="adash-doughnut-stack">
           <ChartCard
-            title="Case Mix"
+            title="Portfolio Status"
             description="Open · PTP · Closed"
             icon={PieChart}
             accent="var(--theme-color)"
@@ -495,7 +562,7 @@ function AgentDashboard() {
         </div>
       </section>
 
-      {/* ── Contact Volume + Activity Feed ─────────────── */}
+      {/* ── Contact Volume + Activity Feed ───────────────── */}
       <section className="adash-bottom-section">
         <ChartCard
           title="Contact Volume"

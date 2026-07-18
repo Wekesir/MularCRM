@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LazyDataTable from '../../components/LazyDataTable';
-import LoadingButton from '../../components/LoadingButton';
+import RoleFormModal from '../../components/RoleFormModal';
 import { createRole, deleteRole, fetchPermissionRegistry, fetchRoles, updateRole } from '../../api/accessControl';
-import PermissionMatrix from './PermissionMatrix';
 import { useConfirm } from '../../context/ConfirmContext';
 
 const emptyCrud = { create: false, read: false, update: false, delete: false };
@@ -29,6 +29,7 @@ function AccessLevels() {
   const [roles, setRoles] = useState([]);
   const [selectedRoleId, setSelectedRoleId] = useState(null);
   const [roleForm, setRoleForm] = useState({ name: '', permissions: {} });
+  const [modalOpen, setModalOpen] = useState(false);
   const [loadingAction, setLoadingAction] = useState(null);
   const [rolesRefreshKey, setRolesRefreshKey] = useState(0);
 
@@ -54,14 +55,21 @@ function AccessLevels() {
 
   const selectedRole = roles.find((r) => r.id === selectedRoleId);
 
-  const selectRole = (role) => {
+  const openEditRole = (role) => {
     setSelectedRoleId(role.id);
     setRoleForm({ name: role.name, permissions: role.permissions });
+    setModalOpen(true);
   };
 
-  const selectNewRole = () => {
+  const openNewRole = () => {
     setSelectedRoleId(null);
     setRoleForm({ name: '', permissions: buildEmptyPermissions(registry) });
+    setModalOpen(true);
+  };
+
+  const closeModal = () => {
+    if (isSavingRole) return;
+    setModalOpen(false);
   };
 
   const handleSaveRole = async () => {
@@ -80,14 +88,17 @@ function AccessLevels() {
         const updated = await updateRole(selectedRoleId, payload);
         toast.success('Role updated');
         setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
-        selectRole(updated);
+        setSelectedRoleId(updated.id);
+        setRoleForm({ name: updated.name, permissions: updated.permissions });
       } else {
         const created = await createRole(roleForm);
         toast.success('Role created');
         setRoles((prev) => [...prev, created]);
-        selectRole(created);
+        setSelectedRoleId(created.id);
+        setRoleForm({ name: created.name, permissions: created.permissions });
       }
       refreshRolesTable();
+      setModalOpen(false);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to save role');
     } finally {
@@ -109,7 +120,10 @@ function AccessLevels() {
           await deleteRole(id);
           toast.success('Role deleted');
           setRoles((prev) => prev.filter((r) => r.id !== id));
-          if (selectedRoleId === id) selectNewRole();
+          if (selectedRoleId === id) {
+            setSelectedRoleId(null);
+            setModalOpen(false);
+          }
           refreshRolesTable();
         } catch (error) {
           toast.error(error.response?.data?.message || 'Failed to delete role');
@@ -123,7 +137,7 @@ function AccessLevels() {
 
   const handleRoleAction = (action, row) => {
     if (action === 'delete') handleDeleteRole(row.id);
-    if (action === 'edit') selectRole(row);
+    if (action === 'edit') openEditRole(row);
   };
 
   const roleColumns = useMemo(
@@ -148,8 +162,8 @@ function AccessLevels() {
         searchable: false,
         render: (_data, _type, row) =>
           row.isSystemAdmin
-            ? `<button type="button" class="btn-table" data-action="edit">Edit</button>`
-            : `<button type="button" class="btn-table" data-action="edit">Edit</button>
+            ? `<button type="button" class="btn-table btn-table-edit" data-action="edit">Edit</button>`
+            : `<button type="button" class="btn-table btn-table-edit" data-action="edit">Edit</button>
                <button type="button" class="btn-table btn-table-danger" data-action="delete">Delete</button>`,
       },
     ],
@@ -167,11 +181,12 @@ function AccessLevels() {
           <div className="access-table-toolbar">
             <button
               type="button"
-              className="btn-secondary"
-              onClick={selectNewRole}
+              className="btn-primary btn-sm"
+              onClick={openNewRole}
               disabled={isBusy}
             >
-              + New Role
+              <Plus className="icon-sm" />
+              New Role
             </button>
           </div>
           {isDeletingRole && (
@@ -184,48 +199,23 @@ function AccessLevels() {
             ajaxPath="/api/access/roles"
             columns={roleColumns}
             refreshKey={rolesRefreshKey}
-            onRowClick={selectRole}
+            onRowClick={openEditRole}
             onAction={handleRoleAction}
           />
         </div>
-
-        <div className="access-editor">
-          <h3>{selectedRoleId ? 'Edit Role' : 'New Role'}</h3>
-          <label>
-            Role Name
-            <input
-              type="text"
-              value={roleForm.name}
-              onChange={(e) => setRoleForm((prev) => ({ ...prev, name: e.target.value }))}
-            />
-          </label>
-
-          {selectedRole?.isSystemAdmin && (
-            <p className="config-hint">
-              System Admin has full access to all modules, submodules, and CRUD actions.
-            </p>
-          )}
-
-          {registry.length > 0 && (
-            <PermissionMatrix
-              registry={registry}
-              permissions={roleForm.permissions}
-              onChange={(permissions) => setRoleForm((prev) => ({ ...prev, permissions }))}
-              disabled={selectedRole?.isSystemAdmin}
-            />
-          )}
-
-          <LoadingButton
-            className="btn-primary"
-            onClick={handleSaveRole}
-            loading={isSavingRole}
-            loadingText={selectedRoleId ? 'Updating...' : 'Creating...'}
-            disabled={isBusy && !isSavingRole}
-          >
-            {selectedRoleId ? 'Update Role' : 'Create Role'}
-          </LoadingButton>
-        </div>
       </div>
+
+      <RoleFormModal
+        open={modalOpen}
+        onClose={closeModal}
+        form={roleForm}
+        setForm={setRoleForm}
+        registry={registry}
+        isSystemAdmin={Boolean(selectedRole?.isSystemAdmin)}
+        isEditing={Boolean(selectedRoleId)}
+        isSaving={isSavingRole}
+        onSave={handleSaveRole}
+      />
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { useSystemConfig } from '../context/SystemConfigContext';
@@ -27,10 +27,16 @@ function SidebarNavLink({ path, label, onNavigate, end = false }) {
   );
 }
 
-function SidebarNavDropdown({ dropdownKey, label, items, onNavigate }) {
+function SidebarNavDropdown({
+  dropdownKey,
+  label,
+  items,
+  onNavigate,
+  isOpen,
+  onToggle,
+}) {
   const location = useLocation();
   const isChildActive = items.some((child) => location.pathname.startsWith(child.path));
-  const [open, setOpen] = useState(isChildActive);
   const Icon = getSidebarIcon(dropdownKey);
 
   return (
@@ -42,20 +48,20 @@ function SidebarNavDropdown({ dropdownKey, label, items, onNavigate }) {
             ? 'sidebar-nav-dropdown-trigger sidebar-nav-dropdown-trigger-active'
             : 'sidebar-nav-dropdown-trigger'
         }
-        onClick={() => setOpen((prev) => !prev)}
-        aria-expanded={open}
+        onClick={() => onToggle(dropdownKey)}
+        aria-expanded={isOpen}
       >
         <span className="sidebar-nav-icon-box" aria-hidden="true">
           <Icon className="sidebar-nav-icon" />
         </span>
         <span className="sidebar-nav-label">{label}</span>
         <ChevronDown
-          className={open ? 'sidebar-nav-dropdown-chevron is-open' : 'sidebar-nav-dropdown-chevron'}
+          className={isOpen ? 'sidebar-nav-dropdown-chevron is-open' : 'sidebar-nav-dropdown-chevron'}
           aria-hidden="true"
         />
       </button>
 
-      {open && (
+      {isOpen && (
         <div className="sidebar-nav-dropdown-panel">
           {items.map(({ path, label: childLabel }) => {
             const ChildIcon = getSidebarIcon(path);
@@ -104,27 +110,55 @@ function SidebarUserCard() {
   );
 }
 
-function isNavItemVisible(item, { canAssignCases }) {
+function isNavItemVisible(item, { canAssignCases, canAccessPath }) {
   if (item.assignersOnly && !canAssignCases) return false;
+  if (item.path && !canAccessPath(item.path)) return false;
   return true;
 }
 
-function SidebarNav({ onNavigate, className = '' }) {
-  const { logout } = useUser();
-  const { canAssignCases } = usePermissions();
+function findActiveDropdownKey(navItems, pathname) {
+  const match = navItems.find(
+    (item) =>
+      item.type === 'dropdown' &&
+      item.children.some((child) => pathname.startsWith(child.path))
+  );
+  return match?.key ?? null;
+}
 
-  const visibleNav = sidebarNav
-    .map((item) => {
-      if (item.type === 'dropdown') {
-        const children = (item.children || []).filter((child) =>
-          isNavItemVisible(child, { canAssignCases })
-        );
-        if (children.length === 0) return null;
-        return { ...item, children };
-      }
-      return isNavItemVisible(item, { canAssignCases }) ? item : null;
-    })
-    .filter(Boolean);
+function SidebarNav({ onNavigate, className = '' }) {
+  const location = useLocation();
+  const { logout } = useUser();
+  const { canAssignCases, canAccessPath, isSystemAdmin, permissionsLoaded } = usePermissions();
+  const [openDropdownKey, setOpenDropdownKey] = useState(null);
+
+  const visibleNav = useMemo(
+    () => {
+      // Until permissions resolve, avoid flashing every module to restricted roles.
+      if (!permissionsLoaded && !isSystemAdmin) return [];
+
+      return sidebarNav
+        .map((item) => {
+          if (item.type === 'dropdown') {
+            const children = (item.children || []).filter((child) =>
+              isNavItemVisible(child, { canAssignCases, canAccessPath })
+            );
+            if (children.length === 0) return null;
+            return { ...item, children };
+          }
+          return isNavItemVisible(item, { canAssignCases, canAccessPath }) ? item : null;
+        })
+        .filter(Boolean);
+    },
+    [canAssignCases, canAccessPath, isSystemAdmin, permissionsLoaded]
+  );
+
+  useEffect(() => {
+    setOpenDropdownKey(findActiveDropdownKey(visibleNav, location.pathname));
+  }, [location.pathname, visibleNav]);
+
+  const handleDropdownToggle = (key) => {
+    setOpenDropdownKey((prev) => (prev === key ? null : key));
+  };
 
   return (
     <div className={`sidebar-inner ${className}`.trim()}>
@@ -139,6 +173,8 @@ function SidebarNav({ onNavigate, className = '' }) {
                   label={item.label}
                   items={item.children}
                   onNavigate={onNavigate}
+                  isOpen={openDropdownKey === item.key}
+                  onToggle={handleDropdownToggle}
                 />
               ) : (
                 <SidebarNavLink

@@ -6,6 +6,7 @@ const tabs = [
   { path: '/profile', label: 'Profile', end: true },
   { path: '/profile/password', label: 'Change Password' },
   { path: '/profile/passkeys', label: 'Device Unlock' },
+  { path: '/profile/sim-cards', label: 'SIM Cards' },
 ];
 
 function ProfilePage() {

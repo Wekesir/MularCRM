@@ -431,23 +431,6 @@ async function updateLoginAudit(id, payload = {}) {
   return getLoginAuditById(id);
 }
 
-async function deleteLoginAudit(id) {
-  const [result] = await pool.query('DELETE FROM login_audit WHERE id = ?', [id]);
-  return result.affectedRows > 0;
-}
-
-async function clearLoginAudits({ olderThanDays } = {}) {
-  if (olderThanDays) {
-    const [result] = await pool.query(
-      'DELETE FROM login_audit WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-      [Number(olderThanDays)]
-    );
-    return result.affectedRows;
-  }
-  const [result] = await pool.query('DELETE FROM login_audit');
-  return result.affectedRows;
-}
-
 async function getLoginAuditStats() {
   const [[totals]] = await pool.query(
     `SELECT
@@ -570,23 +553,6 @@ async function updateEmailAudit(id, payload = {}) {
     ]
   );
   return getEmailAuditById(id);
-}
-
-async function deleteEmailAudit(id) {
-  const [result] = await pool.query('DELETE FROM email_audit WHERE id = ?', [id]);
-  return result.affectedRows > 0;
-}
-
-async function clearEmailAudits({ olderThanDays } = {}) {
-  if (olderThanDays) {
-    const [result] = await pool.query(
-      'DELETE FROM email_audit WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-      [Number(olderThanDays)]
-    );
-    return result.affectedRows;
-  }
-  const [result] = await pool.query('DELETE FROM email_audit');
-  return result.affectedRows;
 }
 
 async function getEmailAuditStats({ dateFrom, dateTo } = {}) {
@@ -740,23 +706,6 @@ async function updateSmsAudit(id, payload = {}) {
   return getSmsAuditById(id);
 }
 
-async function deleteSmsAudit(id) {
-  const [result] = await pool.query('DELETE FROM sms_audit WHERE id = ?', [id]);
-  return result.affectedRows > 0;
-}
-
-async function clearSmsAudits({ olderThanDays } = {}) {
-  if (olderThanDays) {
-    const [result] = await pool.query(
-      'DELETE FROM sms_audit WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-      [Number(olderThanDays)]
-    );
-    return result.affectedRows;
-  }
-  const [result] = await pool.query('DELETE FROM sms_audit');
-  return result.affectedRows;
-}
-
 async function getSmsAuditStats({ dateFrom, dateTo } = {}) {
   const [[totals]] = await pool.query(
     `SELECT
@@ -812,28 +761,22 @@ module.exports = {
   recordLogoutEvent,
   recordEmailEvent,
   recordSmsEvent,
-  // login audit CRUD
+  // login audit read/write
   listLoginAudits,
   getLoginAuditById,
   createLoginAudit,
   updateLoginAudit,
-  deleteLoginAudit,
-  clearLoginAudits,
   getLoginAuditStats,
-  // email audit CRUD
+  // email audit read/write
   listEmailAudits,
   getEmailAuditById,
   createEmailAudit,
   updateEmailAudit,
-  deleteEmailAudit,
-  clearEmailAudits,
   getEmailAuditStats,
-  // sms audit CRUD
+  // sms audit read/write
   listSmsAudits,
   getSmsAuditById,
   createSmsAudit,
   updateSmsAudit,
-  deleteSmsAudit,
-  clearSmsAudits,
   getSmsAuditStats,
 };

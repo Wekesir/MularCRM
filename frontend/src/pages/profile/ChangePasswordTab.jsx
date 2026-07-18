@@ -1,15 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { KeyRound, Lock, ShieldCheck } from 'lucide-react';
 import AuthFormField from '../../components/auth/AuthFormField';
 import LoadingButton from '../../components/LoadingButton';
 import { useUser } from '../../context/UserContext';
-import { useAppSelector } from '../../store/hooks';
 
 function ChangePasswordTab() {
   const { changePassword } = useUser();
-  const navigate = useNavigate();
-  const mustResetPassword = useAppSelector((state) => state.auth.mustResetPassword);
   const [form, setForm] = useState({
     currentPassword: '',
     newPassword: '',
@@ -19,15 +15,11 @@ function ChangePasswordTab() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    const redirectAfterUpdate = mustResetPassword;
     setSaving(true);
     try {
       const success = await changePassword(form);
       if (success) {
         setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-        if (redirectAfterUpdate) {
-          navigate('/dashboard', { replace: true });
-        }
       }
     } finally {
       setSaving(false);
@@ -44,9 +36,7 @@ function ChangePasswordTab() {
           </span>
           <h2 className="auth-title">Change password</h2>
           <p className="auth-description">
-            {mustResetPassword
-              ? 'You must set a new password before continuing to the dashboard.'
-              : 'Choose a strong password you have not used on this account before.'}
+            Choose a strong password you have not used on this account before.
           </p>
         </div>
 
@@ -111,7 +101,7 @@ function ChangePasswordTab() {
             loading={saving}
             loadingText="Updating..."
           >
-            {mustResetPassword ? 'Update and continue' : 'Update password'}
+            Update password
           </LoadingButton>
         </form>
       </div>

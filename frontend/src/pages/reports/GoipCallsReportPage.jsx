@@ -1,12 +1,13 @@
 import { Headset } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function GoipCallsReportPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="goip-calls-report"
       icon={Headset}
       title="GOIP Calls Report"
-      description="Review call activity and outcomes made through GOIP lines."
+      description="Voice call activity and outcomes"
     />
   );
 }

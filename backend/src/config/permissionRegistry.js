@@ -12,9 +12,17 @@ const PERMISSION_REGISTRY = [
       { key: 'file_management', label: 'File Management' },
       { key: 'closed_files', label: 'Closed Files' },
       { key: 'agent_management', label: 'Agent Management' },
+      { key: 'call_centers', label: 'Call Centers' },
     ],
   },
-  { key: 'case_management', label: 'Case Management' },
+  {
+    key: 'case_management',
+    label: 'Case Management',
+    submodules: [
+      { key: 'all_cases', label: 'All Cases' },
+      { key: 'my_portfolio', label: 'My Portfolio' },
+    ],
+  },
   { key: 'unassigned_files', label: 'Unassigned Files' },
   {
     key: 'communication',
@@ -71,7 +79,7 @@ const PERMISSION_REGISTRY = [
       { key: 'case_priority', label: 'Case Priority' },
       { key: 'agent_experience', label: 'Agent Experience' },
       { key: 'agent_expertise', label: 'Agent Expertise' },
-      { key: 'client_agents', label: 'Client Agents' },
+      { key: 'client_agents', label: 'Client Call Centers' },
       { key: 'workload_parameters', label: 'Workload Parameters' },
       { key: 'contactability', label: 'Contactability' },
       { key: 'contact_type', label: 'Contact Type' },
@@ -125,10 +133,244 @@ function buildEmptyPermissions() {
   return permissions;
 }
 
+function setCrud(target, path, crud) {
+  const parts = path.split('.');
+  if (parts.length === 1) {
+    target[parts[0]] = { ...crud };
+    return;
+  }
+  const [mod, sub] = parts;
+  if (!target[mod] || typeof target[mod] !== 'object') target[mod] = {};
+  target[mod][sub] = { ...crud };
+}
+
+/** Default matrix for Senior Supervisor (company-wide, no system config). */
+function buildSeniorSupervisorPermissions() {
+  const p = buildEmptyPermissions();
+  const r = { create: true, read: true, update: true, delete: false };
+  const ro = { create: false, read: true, update: false, delete: false };
+
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'management.client_management', r);
+  // Senior Supervisors upload debtor batches and bind them to call centers.
+  setCrud(p, 'management.debtor_management', r);
+  setCrud(p, 'management.file_management', ro);
+  setCrud(p, 'management.closed_files', ro);
+  setCrud(p, 'management.agent_management', r);
+  setCrud(p, 'management.call_centers', CRUD);
+  setCrud(p, 'case_management.all_cases', r);
+  setCrud(p, 'unassigned_files', ro);
+  setCrud(p, 'payments.payments', ro);
+  setCrud(p, 'payments.ptp', ro);
+  setCrud(p, 'settings.client_agents', CRUD);
+  setCrud(p, 'settings.agent_experience', ro);
+  setCrud(p, 'settings.agent_expertise', ro);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Default matrix for Supervisor (call-center scoped). */
+function buildSupervisorPermissions() {
+  const p = buildEmptyPermissions();
+  const r = { create: true, read: true, update: true, delete: false };
+  const ro = { create: false, read: true, update: false, delete: false };
+
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'management.client_management', ro);
+  setCrud(p, 'management.debtor_management', ro);
+  setCrud(p, 'management.file_management', ro);
+  setCrud(p, 'management.closed_files', ro);
+  setCrud(p, 'management.agent_management', r);
+  setCrud(p, 'case_management.all_cases', r);
+  setCrud(p, 'unassigned_files', r);
+  setCrud(p, 'payments.payments', ro);
+  setCrud(p, 'payments.ptp', r);
+  setCrud(p, 'communication.bulk_sms', r);
+  setCrud(p, 'communication.bulk_emails', r);
+  return p;
+}
+
+/** Default matrix for Agents (personal portfolio). */
+function buildAgentDefaultPermissions() {
+  const p = buildEmptyPermissions();
+  const r = { create: true, read: true, update: true, delete: false };
+  const ro = { create: false, read: true, update: false, delete: false };
+
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'case_management.my_portfolio', r);
+  setCrud(p, 'payments.ptp', r);
+  setCrud(p, 'payments.payments', ro);
+  return p;
+}
+
+const RO = { create: false, read: true, update: false, delete: false };
+const R = { create: true, read: true, update: true, delete: false };
+
+function applyModuleCrud(target, moduleKey, crud) {
+  const mod = PERMISSION_REGISTRY.find((m) => m.key === moduleKey);
+  if (!mod) return;
+  if (mod.submodules) {
+    for (const sub of mod.submodules) {
+      setCrud(target, `${moduleKey}.${sub.key}`, crud);
+    }
+  } else {
+    setCrud(target, moduleKey, crud);
+  }
+}
+
+/** Near-full ops; no system_configurations (reserved for System Admin). */
+function buildTenantAdministratorPermissions() {
+  const p = buildEmptyPermissions();
+  for (const mod of PERMISSION_REGISTRY) {
+    if (mod.key === 'system_configurations') continue;
+    applyModuleCrud(p, mod.key, CRUD);
+  }
+  return p;
+}
+
+/** Dashboard + all reports read-only. */
+function buildExecutivePermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', RO);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Broad operational read across management, cases, payments, reports. */
+function buildGeneralManagerPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', CRUD);
+  applyModuleCrud(p, 'management', RO);
+  applyModuleCrud(p, 'case_management', RO);
+  setCrud(p, 'unassigned_files', RO);
+  applyModuleCrud(p, 'payments', RO);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Same shape as Senior Supervisor. */
+function buildRegionalManagerPermissions() {
+  return buildSeniorSupervisorPermissions();
+}
+
+/** Collections ops: cases, unassigned, debtors/files, payments/PTP, agents. */
+function buildCollectionsManagerPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'management.client_management', RO);
+  setCrud(p, 'management.debtor_management', R);
+  setCrud(p, 'management.file_management', R);
+  setCrud(p, 'management.closed_files', RO);
+  setCrud(p, 'management.agent_management', R);
+  setCrud(p, 'case_management.all_cases', R);
+  setCrud(p, 'unassigned_files', R);
+  setCrud(p, 'payments.payments', R);
+  setCrud(p, 'payments.ptp', R);
+  setCrud(p, 'payments.commissions', RO);
+  setCrud(p, 'payments.non_confirmed_payments', RO);
+  setCrud(p, 'communication.bulk_sms', R);
+  setCrud(p, 'communication.bulk_emails', R);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+function buildCallCentreSupervisorPermissions() {
+  return buildSupervisorPermissions();
+}
+
+function buildInternalAgentPermissions() {
+  return buildAgentDefaultPermissions();
+}
+
+function buildExternalAgentSupervisorPermissions() {
+  return buildSupervisorPermissions();
+}
+
+function buildExternalAgentPermissions() {
+  return buildAgentDefaultPermissions();
+}
+
+/** Debtor RO, communication, contact upload, PTP. */
+function buildCustomerServiceOfficerPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'management.debtor_management', RO);
+  setCrud(p, 'communication.bulk_sms', R);
+  setCrud(p, 'communication.bulk_emails', R);
+  setCrud(p, 'contact_upload', R);
+  setCrud(p, 'payments.ptp', R);
+  return p;
+}
+
+/** Dashboard, reports RO, debtors/files RO. */
+function buildComplianceOfficerPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', CRUD);
+  setCrud(p, 'management.debtor_management', RO);
+  setCrud(p, 'management.file_management', RO);
+  setCrud(p, 'management.closed_files', RO);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Dashboard + reports + management read-only; no write. */
+function buildAuditorPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', RO);
+  applyModuleCrud(p, 'management', RO);
+  applyModuleCrud(p, 'case_management', RO);
+  setCrud(p, 'unassigned_files', RO);
+  applyModuleCrud(p, 'payments', RO);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Dashboard RO + all reports RO only. */
+function buildReportViewerPermissions() {
+  const p = buildEmptyPermissions();
+  setCrud(p, 'dashboard', RO);
+  applyModuleCrud(p, 'reports', RO);
+  return p;
+}
+
+/** Roles seeded alongside System Admin / Senior Supervisor / Supervisor / Agent. */
+const SEEDED_ORG_ROLES = [
+  { name: 'Tenant Administrator', build: buildTenantAdministratorPermissions },
+  { name: 'Executive', build: buildExecutivePermissions },
+  { name: 'General Manager', build: buildGeneralManagerPermissions },
+  { name: 'Regional Manager', build: buildRegionalManagerPermissions },
+  { name: 'Collections Manager', build: buildCollectionsManagerPermissions },
+  { name: 'Call Centre Supervisor', build: buildCallCentreSupervisorPermissions },
+  { name: 'Internal Agent', build: buildInternalAgentPermissions },
+  { name: 'External Agent Supervisor', build: buildExternalAgentSupervisorPermissions },
+  { name: 'External Agent', build: buildExternalAgentPermissions },
+  { name: 'Customer Service Officer', build: buildCustomerServiceOfficerPermissions },
+  { name: 'Compliance Officer', build: buildComplianceOfficerPermissions },
+  { name: 'Auditor', build: buildAuditorPermissions },
+  { name: 'Report Viewer', build: buildReportViewerPermissions },
+];
+
 module.exports = {
   PERMISSION_REGISTRY,
   CRUD,
   NONE,
   buildFullPermissions,
   buildEmptyPermissions,
+  buildSeniorSupervisorPermissions,
+  buildSupervisorPermissions,
+  buildAgentDefaultPermissions,
+  buildTenantAdministratorPermissions,
+  buildExecutivePermissions,
+  buildGeneralManagerPermissions,
+  buildRegionalManagerPermissions,
+  buildCollectionsManagerPermissions,
+  buildCallCentreSupervisorPermissions,
+  buildInternalAgentPermissions,
+  buildExternalAgentSupervisorPermissions,
+  buildExternalAgentPermissions,
+  buildCustomerServiceOfficerPermissions,
+  buildComplianceOfficerPermissions,
+  buildAuditorPermissions,
+  buildReportViewerPermissions,
+  SEEDED_ORG_ROLES,
 };

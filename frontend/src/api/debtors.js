@@ -113,6 +113,8 @@ export async function bulkUploadDebtors(file, selections = {}) {
   if (selections.debtCategoryId) formData.append('debtCategoryId', String(selections.debtCategoryId));
   if (selections.debtTypeId) formData.append('debtTypeId', String(selections.debtTypeId));
   if (selections.currencyId) formData.append('currencyId', String(selections.currencyId));
+  if (selections.callCenterId) formData.append('callCenterId', String(selections.callCenterId));
+  if (selections.forceCallCenter) formData.append('forceCallCenter', '1');
   const { data } = await api.post('/api/debtors/bulk-upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });

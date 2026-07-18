@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAppSelector } from '../store/hooks';
 
@@ -11,17 +11,12 @@ function isSessionValid(session) {
 function RequireAuth() {
   const location = useLocation();
   const session = useAppSelector((state) => state.auth.session);
-  const mustResetPassword = useAppSelector((state) => state.auth.mustResetPassword);
 
   const valid = useMemo(() => isSessionValid(session), [session]);
 
   if (!valid) {
     const next = encodeURIComponent(location.pathname + location.search);
     return <Navigate to={`/login?next=${next}`} replace />;
-  }
-
-  if (mustResetPassword && !location.pathname.startsWith('/profile/password')) {
-    return <Navigate to="/profile/password" replace />;
   }
 
   return <Outlet />;

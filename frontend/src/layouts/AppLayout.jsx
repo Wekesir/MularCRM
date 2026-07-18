@@ -8,6 +8,8 @@ import { PageActionsProvider, usePageActions } from '../context/PageActionsConte
 import { ConfirmProvider } from '../context/ConfirmContext';
 import { getModuleMeta, pathToModuleKey } from '../routes/moduleMeta';
 import { getSidebarIcon } from '../routes/sidebarIcons';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { toggleSidebarCollapsed } from '../store/slices/preferencesSlice';
 
 function resolveIconPath(pathname) {
   if (pathname.startsWith('/system-configurations')) {
@@ -23,6 +25,8 @@ function resolveIconPath(pathname) {
 }
 
 function AppLayoutContent() {
+  const dispatch = useAppDispatch();
+  const sidebarCollapsed = useAppSelector((state) => state.preferences.sidebarCollapsed);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const meta = getModuleMeta(location.pathname);
@@ -36,8 +40,12 @@ function AppLayoutContent() {
     setSidebarOpen(false);
   }, [location.pathname]);
 
+  const layoutClassName = sidebarCollapsed
+    ? 'app-layout app-layout--sidebar-collapsed'
+    : 'app-layout';
+
   return (
-    <div className="app-layout">
+    <div className={layoutClassName}>
       <div
         className={sidebarOpen ? 'sidebar-overlay visible' : 'sidebar-overlay'}
         onClick={() => setSidebarOpen(false)}
@@ -49,6 +57,8 @@ function AppLayoutContent() {
       <div className="app-main">
         <TopNav
           onMenuToggle={() => setSidebarOpen((open) => !open)}
+          onSidebarToggle={() => dispatch(toggleSidebarCollapsed())}
+          sidebarCollapsed={sidebarCollapsed}
           pageTitle={meta.title}
           pageDescription={meta.description}
           showStickyTitle={showStickyTitle}

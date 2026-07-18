@@ -1,12 +1,13 @@
 import { FileText } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function DebtorSummaryPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="debtor-summary"
       icon={FileText}
       title="Debtor Summary"
-      description="Summary report of debtor accounts and balances."
+      description="Debtor accounts, balances and recovery snapshot"
     />
   );
 }

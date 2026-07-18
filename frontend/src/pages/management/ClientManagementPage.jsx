@@ -26,6 +26,7 @@ import { usePageHeaderSticky } from '../../context/PageHeaderStickyContext';
 import { useSystemConfig } from '../../context/SystemConfigContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { fetchClients, createClient, updateClient, deleteClient } from '../../api/clients';
+import { usePermissions } from '../../hooks/usePermissions';
 
 const TYPE_LABEL = Object.fromEntries(BUSINESS_TYPES.map((t) => [t.value, t.label]));
 
@@ -39,6 +40,20 @@ function ClientManagementPage() {
   const { headerInView } = usePageHeaderSticky();
   const { confirm } = useConfirm();
   const { currencySymbol } = useSystemConfig();
+  const { isSystemAdmin, isSeniorSupervisor, isSupervisor, permissions } = usePermissions();
+  const canCreateClient =
+    isSystemAdmin ||
+    isSeniorSupervisor ||
+    Boolean(permissions?.management?.client_management?.create);
+  const canUpdateClient =
+    isSystemAdmin ||
+    isSeniorSupervisor ||
+    Boolean(permissions?.management?.client_management?.update);
+  const canDeleteClient =
+    isSystemAdmin ||
+    isSeniorSupervisor ||
+    Boolean(permissions?.management?.client_management?.delete);
+  const canManageClients = canCreateClient || canUpdateClient || canDeleteClient;
   const isDocked = !headerInView;
   const [modalOpen, setModalOpen] = useState(false);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
@@ -217,24 +232,28 @@ function ClientManagementPage() {
         <button type="button" className="btn-icon-outline" aria-label="Refresh" onClick={handleRefresh}>
           <RefreshCw className="icon-sm" />
         </button>
-        <button
-          type="button"
-          className="btn-sm cm-bulk-upload-btn"
-          aria-label="Bulk upload clients"
-          title="Bulk Upload"
-          onClick={() => setBulkUploadOpen(true)}
-        >
-          <Upload className="icon-sm" />
-          <span className="cm-bulk-upload-label">Bulk Upload</span>
-        </button>
-        <button type="button" className="btn-primary btn-sm" onClick={openAddModal}>
-          <Plus className="icon-sm" />
-          Add Client
-        </button>
+        {canCreateClient && (
+          <button
+            type="button"
+            className="btn-sm cm-bulk-upload-btn"
+            aria-label="Bulk upload clients"
+            title="Bulk Upload"
+            onClick={() => setBulkUploadOpen(true)}
+          >
+            <Upload className="icon-sm" />
+            <span className="cm-bulk-upload-label">Bulk Upload</span>
+          </button>
+        )}
+        {canCreateClient && (
+          <button type="button" className="btn-primary btn-sm" onClick={openAddModal}>
+            <Plus className="icon-sm" />
+            Add Client
+          </button>
+        )}
       </>,
     );
     return () => setActions(null);
-  }, [setActions]);
+  }, [setActions, canCreateClient]);
 
   return (
     <>
@@ -343,13 +362,13 @@ function ClientManagementPage() {
                     Balance <span className="cm-th-currency">({currencySymbol})</span>
                   </th>
                   <th className="cm-th cm-th-contact-btn">Contact</th>
-                  <th className="cm-th cm-th-actions">Actions</th>
+                  {canManageClients && <th className="cm-th cm-th-actions">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td className="cm-td cm-td-empty" colSpan={11}>
+                    <td className="cm-td cm-td-empty" colSpan={canManageClients ? 11 : 10}>
                       <div className="cm-empty-state">
                         <Building2 className="cm-empty-icon" aria-hidden="true" />
                         <p className="cm-empty-title">
@@ -360,7 +379,11 @@ function ClientManagementPage() {
                             ? 'Fetching clients from the system database.'
                             : search || typeFilter || statusFilter
                               ? 'Try adjusting your search or filters.'
-                              : 'Click "Add Client" to onboard your first portfolio owner.'}
+                              : canCreateClient
+                                ? 'Click "Add Client" to onboard your first portfolio owner.'
+                                : isSupervisor
+                                  ? 'Clients assigned to your call center by a Senior Supervisor will appear here.'
+                                  : 'No clients are available for your account.'}
                         </p>
                       </div>
                     </td>
@@ -431,29 +454,35 @@ function ClientManagementPage() {
                         </button>
                       </td>
 
-                      {/* Actions */}
-                      <td className="cm-td cm-td-actions">
-                        <div className="cm-action-group">
-                          <button
-                            type="button"
-                            className="cm-action-btn cm-action-btn-primary"
-                            aria-label="Edit client"
-                            title="Edit profile"
-                            onClick={() => openEditModal(client)}
-                          >
-                            <Pencil className="cm-action-icon" />
-                          </button>
-                          <button
-                            type="button"
-                            className="cm-action-btn cm-action-btn-danger"
-                            aria-label="Delete client"
-                            title="Delete client"
-                            onClick={() => handleDelete(client)}
-                          >
-                            <Trash2 className="cm-action-icon" />
-                          </button>
-                        </div>
-                      </td>
+                      {/* Actions — Senior Supervisor / Admin only */}
+                      {canManageClients && (
+                        <td className="cm-td cm-td-actions">
+                          <div className="cm-action-group">
+                            {canUpdateClient && (
+                              <button
+                                type="button"
+                                className="cm-action-btn cm-action-btn-primary"
+                                aria-label="Edit client"
+                                title="Edit profile"
+                                onClick={() => openEditModal(client)}
+                              >
+                                <Pencil className="cm-action-icon" />
+                              </button>
+                            )}
+                            {canDeleteClient && (
+                              <button
+                                type="button"
+                                className="cm-action-btn cm-action-btn-danger"
+                                aria-label="Delete client"
+                                title="Delete client"
+                                onClick={() => handleDelete(client)}
+                              >
+                                <Trash2 className="cm-action-icon" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))
                 )}

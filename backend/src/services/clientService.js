@@ -1,4 +1,6 @@
 const pool = require('../db/pool');
+const { resolveCallCenterScope, isSeniorSupervisorRole } = require('../config/orgRoles');
+const { recordActivityEvent } = require('./activityService');
 
 function toNumber(value) {
   const n = Number(value);
@@ -20,6 +22,10 @@ function normalizeClient(row) {
     closedValue: toNumber(row.closed_value),
     collected: toNumber(row.collected),
     balance: toNumber(row.balance),
+    callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
+    callCenterName: row.call_center_name || null,
+    callCenterAssignedAt: row.call_center_assigned_at || null,
+    callCenterAssignedBy: row.call_center_assigned_by != null ? Number(row.call_center_assigned_by) : null,
     deletedAt: row.deleted_at || null,
     addedAt: row.created_at ? new Date(row.created_at).toISOString().slice(0, 10) : null,
     createdAt: row.created_at,
@@ -27,20 +33,73 @@ function normalizeClient(row) {
   };
 }
 
-async function listClients() {
+const CLIENT_SELECT = `
+  SELECT c.*, cc.name AS call_center_name
+  FROM clients c
+  LEFT JOIN call_centers cc ON cc.id = c.call_center_id AND cc.deleted_at IS NULL
+`;
+
+async function listClients({ user = null, unassignedOnly = false } = {}) {
+  const where = ['c.deleted_at IS NULL'];
+  const params = [];
+
+  if (user) {
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'center') {
+      if (!scope.callCenterId) return [];
+      where.push('c.call_center_id = ?');
+      params.push(scope.callCenterId);
+    } else if (scope.mode === 'none') {
+      return [];
+    }
+  }
+
+  if (unassignedOnly) {
+    where.push('c.call_center_id IS NULL');
+  }
+
   const [rows] = await pool.query(
-    'SELECT * FROM clients WHERE deleted_at IS NULL ORDER BY created_at DESC, id DESC'
+    `${CLIENT_SELECT}
+     WHERE ${where.join(' AND ')}
+     ORDER BY c.created_at DESC, c.id DESC`,
+    params
   );
   return rows.map(normalizeClient);
 }
 
 async function getClientById(id) {
-  const [rows] = await pool.query('SELECT * FROM clients WHERE id = ? LIMIT 1', [id]);
+  const [rows] = await pool.query(`${CLIENT_SELECT} WHERE c.id = ? LIMIT 1`, [id]);
   return rows[0] ? normalizeClient(rows[0]) : null;
 }
 
+/** Center Supervisors may only access clients bound to their call center. */
+async function assertCallerCanAccessClient(user, clientId) {
+  if (!user || user.isSystemAdmin) return;
+  const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'company') return;
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+  const client = await getClientById(clientId);
+  if (!client || client.deletedAt) {
+    const err = new Error('Client not found');
+    err.code = 'NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+  if (Number(client.callCenterId) !== Number(scope.callCenterId)) {
+    const err = new Error('This client is not assigned to your call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+}
+
 async function getClientByEmail(email) {
-  const [rows] = await pool.query('SELECT * FROM clients WHERE email = ? LIMIT 1', [email]);
+  const [rows] = await pool.query(`${CLIENT_SELECT} WHERE c.email = ? LIMIT 1`, [email]);
   return rows[0] ? normalizeClient(rows[0]) : null;
 }
 
@@ -187,6 +246,98 @@ async function restoreClient(id) {
   return { restored: true, id: Number(id) };
 }
 
+/**
+ * Assign a client to a call center once.
+ * System Admin or Senior Supervisor may force reassignment with { force: true }.
+ */
+async function assignClientCallCenter(clientId, callCenterId, { performedBy, force = false } = {}) {
+  const client = await getClientById(clientId);
+  if (!client) {
+    const err = new Error('Client not found');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+
+  const centerId = Number(callCenterId);
+  if (!Number.isFinite(centerId)) {
+    const err = new Error('callCenterId is required');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
+  const [centers] = await pool.query(
+    `SELECT id, name, status FROM call_centers
+     WHERE id = ? AND deleted_at IS NULL LIMIT 1`,
+    [centerId]
+  );
+  if (!centers[0]) {
+    const err = new Error('Call center not found');
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+  if (centers[0].status !== 'active') {
+    const err = new Error('Call center is inactive');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
+  const alreadyAssigned = client.callCenterId != null;
+  const isAdmin = Boolean(performedBy?.isSystemAdmin);
+  const isSenior = isSeniorSupervisorRole(performedBy);
+  const canManage = isAdmin || isSenior;
+
+  if (!canManage) {
+    const err = new Error('Only Senior Supervisors can assign clients to call centers');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+
+  if (alreadyAssigned && !force) {
+    const err = new Error(
+      `Client already assigned to ${client.callCenterName || 'a call center'}. Use force reassignment to move them.`
+    );
+    err.code = 'ALREADY_ASSIGNED';
+    throw err;
+  }
+
+  if (alreadyAssigned && force && !canManage) {
+    const err = new Error('Only a Senior Supervisor or System Admin can reassign a client');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+
+  await pool.query(
+    `UPDATE clients
+     SET call_center_id = ?,
+         call_center_assigned_at = NOW(),
+         call_center_assigned_by = ?
+     WHERE id = ?`,
+    [centerId, performedBy?.id || null, clientId]
+  );
+
+  await recordActivityEvent({
+    userId: performedBy?.id ?? null,
+    userName: performedBy?.name ?? null,
+    actionType: alreadyAssigned ? 'client.call_center_reassigned' : 'client.call_center_assigned',
+    title: alreadyAssigned
+      ? `Reassigned ${client.name} to ${centers[0].name}`
+      : `Assigned ${client.name} to ${centers[0].name}`,
+    subject: client.name,
+    entityType: 'client',
+    entityId: String(clientId),
+    metadata: {
+      callCenterId: centerId,
+      callCenterName: centers[0].name,
+      previousCallCenterId: client.callCenterId,
+      force: Boolean(force),
+    },
+  });
+
+  return getClientById(clientId);
+}
+
 module.exports = {
   listClients,
   getClientById,
@@ -195,4 +346,6 @@ module.exports = {
   updateClient,
   deleteClient,
   restoreClient,
+  assignClientCallCenter,
+  assertCallerCanAccessClient,
 };

@@ -7,6 +7,24 @@ const { upsertDebtorByLoanId, updateDebtorFileStats } = require('./debtorService
 const { recordActivityEvent } = require('./activityService');
 const paymentService = require('./paymentService');
 
+const NON_PAYMENT_UPDATE_FIELDS = new Set([
+  'name',
+  'phone',
+  'email',
+  'secondaryPhone',
+  'loanAmount',
+  'outstandingBalance',
+  'overdueDays',
+  'bucket',
+  'waivedAmount',
+  'installmentAmount',
+  'penalty',
+  'accountNumber',
+  'idNumber',
+  'contractNumber',
+  'physicalAddress',
+]);
+
 const COLUMNS = [
   { key: 'fullName', header: 'full_name' },
   { key: 'phoneNumber', header: 'phone_number' },
@@ -236,7 +254,7 @@ async function importDebtorRows(rows, {
   for (const job of pending) {
     try {
       const result = await upsertDebtorByLoanId(job.candidate);
-      const { debtor, wasCreated, previousTotalPaid } = result;
+      const { debtor, wasCreated, previousTotalPaid, changedFields = [] } = result;
 
       if (wasCreated) {
         created.push(debtor);
@@ -259,6 +277,9 @@ async function importDebtorRows(rows, {
               paymentDate: job.candidate.lastPaidDate || job.candidate.borrowDate || null,
               currencyId: debtor.currencyId,
               agentName: debtor.assignedAgent || null,
+              debtorName: debtor.name,
+              userId,
+              recordActivity: true,
             })
             .catch((err) => {
               failed.push({
@@ -291,6 +312,23 @@ async function importDebtorRows(rows, {
                 message: `Updated, but payment delta could not be recorded: ${err.message}`,
               });
             });
+        }
+
+        const materialChanges = changedFields.filter((f) => NON_PAYMENT_UPDATE_FIELDS.has(f));
+        if (materialChanges.length > 0) {
+          recordActivityEvent({
+            userId,
+            actionType: 'debtor.updated',
+            title: 'Debtor Details Updated',
+            subject: debtor.name,
+            entityType: 'debtor',
+            entityId: String(debtor.id),
+            metadata: {
+              source: 'import',
+              fileId: Number(fileId) || null,
+              changedFields: materialChanges,
+            },
+          }).catch(() => {});
         }
       }
     } catch (err) {

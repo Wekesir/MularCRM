@@ -33,6 +33,16 @@ const DEFAULT_SYSTEM_CONFIG = {
     apiUrl: CELCOM_AFRICA_SMS.ENDPOINTS.SEND_SMS,
     passType: CELCOM_AFRICA_SMS.DEFAULT_PASS_TYPE,
   },
+  voice: {
+    provider: '',
+    username: '',
+    apiKey: '',
+    /** Platform AT virtual number used as callFrom for outbound bridges */
+    voiceNumber: '',
+    /** Public base URL for AT voice webhooks (e.g. https://api.example.com) */
+    callbackBaseUrl: '',
+    recordCalls: true,
+  },
   auth: {
     otpOnLogin: true,
   },

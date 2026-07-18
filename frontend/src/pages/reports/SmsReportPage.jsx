@@ -1,12 +1,13 @@
 import { MessageSquareText } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function SmsReportPage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="sms-report"
       icon={MessageSquareText}
       title="SMS Report"
-      description="Review SMS delivery activity and outcomes."
+      description="SMS delivery activity and outcomes"
     />
   );
 }

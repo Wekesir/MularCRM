@@ -1,12 +1,13 @@
 import { LineChart } from 'lucide-react';
-import PlaceholderModulePage from '../../components/PlaceholderModulePage';
+import ReportShell from '../../components/reports/ReportShell';
 
 function RecoveryRatePage() {
   return (
-    <PlaceholderModulePage
+    <ReportShell
+      slug="recovery-rate"
       icon={LineChart}
       title="Recovery Rate"
-      description="Track the percentage of debt successfully recovered."
+      description="Percentage of debt recovered by client"
     />
   );
 }

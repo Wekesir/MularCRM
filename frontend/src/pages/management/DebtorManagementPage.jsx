@@ -235,7 +235,11 @@ function DebtorManagementPage() {
   const exportBtnRef = useRef(null);
   const sentinelRef = useRef(null);
   const reqId = useRef(0);
-  const { isSystemAdmin } = usePermissions();
+  const { isSystemAdmin, isSeniorSupervisor, permissions } = usePermissions();
+  const canBulkUpload =
+    isSystemAdmin ||
+    isSeniorSupervisor ||
+    Boolean(permissions?.management?.debtor_management?.create);
 
   const collectionRate = stats.loanAmount > 0
     ? Math.round((stats.totalPaid / stats.loanAmount) * 100)
@@ -443,21 +447,23 @@ function DebtorManagementPage() {
             <ChevronDown className={`dm-export-chevron${exportOpen ? ' dm-export-chevron--open' : ''}`} />
           </button>
         </div>
-        <button
-          type="button"
-          className="btn-sm cm-bulk-upload-btn"
-          aria-label="Bulk upload debtors"
-          title="Bulk Upload"
-          onClick={() => setBulkUploadOpen(true)}
-        >
-          <Upload className="icon-sm" />
-          <span className="cm-bulk-upload-label">Bulk Upload</span>
-        </button>
+        {canBulkUpload && (
+          <button
+            type="button"
+            className="btn-sm cm-bulk-upload-btn"
+            aria-label="Bulk upload debtors"
+            title="Bulk Upload"
+            onClick={() => setBulkUploadOpen(true)}
+          >
+            <Upload className="icon-sm" />
+            <span className="cm-bulk-upload-label">Bulk Upload</span>
+          </button>
+        )}
       </>
     );
     return () => setActions(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setActions, exportOpen, isExporting]);
+  }, [setActions, exportOpen, isExporting, canBulkUpload]);
 
   return (
     <>
@@ -684,7 +690,9 @@ function DebtorManagementPage() {
                         <p className="cm-empty-desc">
                           {searchTerm || bucketFilter || fileFilter || activeAdvCount > 0
                             ? 'Try adjusting your search or filters.'
-                            : 'Click "Bulk Upload" to import debtors from a CSV file.'}
+                            : canBulkUpload
+                              ? 'Click "Bulk Upload" to import debtors from a CSV file.'
+                              : 'No debtor records match the current filters.'}
                         </p>
                       </div>
                     </td>
@@ -698,7 +706,14 @@ function DebtorManagementPage() {
                           <div className="cm-client-name-cell">
                             <span className="dm-debtor-avatar" aria-hidden="true"><User className="cm-client-avatar-icon" /></span>
                             <div>
-                              <p className="cm-client-name">{debtor.name}</p>
+                              <button
+                                type="button"
+                                className="cm-client-name-btn"
+                                onClick={() => setHistoryDebtor(debtor)}
+                                title={`View activity for ${debtor.name}`}
+                              >
+                                {debtor.name}
+                              </button>
                               <p className="cm-client-type dm-cfid-sub">{debtor.loanId || debtor.cfid}</p>
                             </div>
                           </div>

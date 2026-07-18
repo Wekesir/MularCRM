@@ -3,6 +3,7 @@ import {
   ExternalLink,
   Mail,
   MessageSquare,
+  PhoneCall,
   RefreshCw,
   Shield,
   Smartphone,
@@ -157,6 +158,7 @@ function CommunicationIntegration() {
       const saved = await updateConfig({
         email: form.email,
         sms: form.sms,
+        voice: form.voice,
         auth: form.auth,
         notifications: form.notifications,
       });
@@ -586,6 +588,109 @@ function CommunicationIntegration() {
                     </LoadingButton>
                   </div>
                 </aside>
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="communication-section" aria-labelledby="comm-voice-title">
+          <header className="communication-section-header">
+            <div className="communication-section-icon communication-section-icon--sms" aria-hidden="true">
+              <PhoneCall />
+            </div>
+            <div className="communication-section-heading">
+              <div className="communication-section-title-row">
+                <h3 id="comm-voice-title">Voice (Africa&apos;s Talking)</h3>
+                <span
+                  className={`communication-section-badge communication-section-badge--sms${
+                    form.voice?.provider === 'africastalking' ? '' : ' communication-section-badge--muted'
+                  }`}
+                >
+                  {form.voice?.provider === 'africastalking' ? "Africa's Talking" : 'Off'}
+                </span>
+              </div>
+              <p className="communication-section-desc">
+                Inbound and outbound calls for My Portfolio. Agents register their own SIM cards under Profile.
+              </p>
+            </div>
+          </header>
+
+          <div className="communication-section-body config-form">
+            <label>
+              Voice Provider
+              <select
+                value={form.voice?.provider || ''}
+                onChange={(e) => updateField('voice', 'provider', e.target.value)}
+              >
+                <option value="">Disabled</option>
+                <option value="africastalking">Africa&apos;s Talking</option>
+              </select>
+            </label>
+
+            {form.voice?.provider === 'africastalking' && (
+              <div className="communication-field-group communication-field-group--grid">
+                <label>
+                  Username
+                  <input
+                    type="text"
+                    value={form.voice?.username || ''}
+                    onChange={(e) => updateField('voice', 'username', e.target.value)}
+                    placeholder="sandbox or app username"
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  API Key
+                  <input
+                    type="password"
+                    value={form.voice?.apiKey || ''}
+                    onChange={(e) => updateField('voice', 'apiKey', e.target.value)}
+                    placeholder={
+                      form.voice?.apiKeySet ? 'Leave blank to keep current' : 'Africa\'s Talking API key'
+                    }
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  Voice number (callFrom)
+                  <input
+                    type="text"
+                    value={form.voice?.voiceNumber || ''}
+                    onChange={(e) => updateField('voice', 'voiceNumber', e.target.value)}
+                    placeholder="2547XXXXXXXX"
+                    autoComplete="off"
+                  />
+                </label>
+                <label>
+                  Callback base URL
+                  <input
+                    type="url"
+                    value={form.voice?.callbackBaseUrl || ''}
+                    onChange={(e) => updateField('voice', 'callbackBaseUrl', e.target.value)}
+                    placeholder="https://your-api.example.com"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="checkbox-label communication-field-span-2">
+                  <input
+                    type="checkbox"
+                    checked={form.voice?.recordCalls !== false}
+                    onChange={(e) => updateField('voice', 'recordCalls', e.target.checked)}
+                  />
+                  Record calls when supported
+                </label>
+                <p className="config-hint communication-field-span-2">
+                  Point Africa&apos;s Talking Voice callbacks to{' '}
+                  <code>
+                    {(form.voice?.callbackBaseUrl || 'https://your-api.example.com').replace(/\/$/, '')}
+                    /api/webhooks/africastalking/voice
+                  </code>{' '}
+                  (session) and{' '}
+                  <code>
+                    /api/webhooks/africastalking/voice/events
+                  </code>{' '}
+                  (CDR).
+                </p>
               </div>
             )}
           </div>

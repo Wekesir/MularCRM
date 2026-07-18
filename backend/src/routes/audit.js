@@ -4,29 +4,21 @@ const {
   getLoginAuditById,
   createLoginAudit,
   updateLoginAudit,
-  deleteLoginAudit,
-  clearLoginAudits,
   getLoginAuditStats,
   listEmailAudits,
   getEmailAuditById,
   createEmailAudit,
   updateEmailAudit,
-  deleteEmailAudit,
-  clearEmailAudits,
   getEmailAuditStats,
   listSmsAudits,
   getSmsAuditById,
   createSmsAudit,
   updateSmsAudit,
-  deleteSmsAudit,
-  clearSmsAudits,
   getSmsAuditStats,
 } = require('../services/auditService');
 const {
   listActivityLogs,
   getActivityLogById,
-  deleteActivityLog,
-  clearActivityLogs,
   getActivityStats,
 } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
@@ -69,7 +61,7 @@ function buildListParams(query) {
 }
 
 /**
- * Registers a standard CRUD + stats route group for an audit resource.
+ * Registers a standard list/read/create/update + stats route group for an audit resource.
  */
 function registerResource(basePath, handlers, labels) {
   router.get(`${basePath}/stats`, async (_req, res) => {
@@ -120,24 +112,6 @@ function registerResource(basePath, handlers, labels) {
     }
   });
 
-  router.delete(basePath, async (req, res) => {
-    try {
-      const deleted = await handlers.clear({ olderThanDays: req.query.olderThanDays });
-      res.json({ deleted });
-    } catch (error) {
-      res.status(500).json({ message: `Failed to clear ${labels.plural}`, detail: error.message });
-    }
-  });
-
-  router.delete(`${basePath}/:id`, async (req, res) => {
-    try {
-      const ok = await handlers.remove(req.params.id);
-      if (!ok) return res.status(404).json({ message: `${labels.singular} not found` });
-      res.json({ success: true });
-    } catch (error) {
-      res.status(500).json({ message: `Failed to delete ${labels.singular}`, detail: error.message });
-    }
-  });
 }
 
 registerResource(
@@ -147,8 +121,6 @@ registerResource(
     get: getLoginAuditById,
     create: createLoginAudit,
     update: updateLoginAudit,
-    remove: deleteLoginAudit,
-    clear: clearLoginAudits,
     stats: getLoginAuditStats,
   },
   { singular: 'Login record', plural: 'login records' }
@@ -161,8 +133,6 @@ registerResource(
     get: getEmailAuditById,
     create: createEmailAudit,
     update: updateEmailAudit,
-    remove: deleteEmailAudit,
-    clear: clearEmailAudits,
     stats: getEmailAuditStats,
   },
   { singular: 'Email record', plural: 'email records' }
@@ -175,8 +145,6 @@ registerResource(
     get: getSmsAuditById,
     create: createSmsAudit,
     update: updateSmsAudit,
-    remove: deleteSmsAudit,
-    clear: clearSmsAudits,
     stats: getSmsAuditStats,
   },
   { singular: 'SMS record', plural: 'SMS records' }
@@ -190,8 +158,6 @@ registerResource(
     // Activities are recorded internally by system actions; not created/edited via the admin API.
     create: async () => null,
     update: async () => null,
-    remove: deleteActivityLog,
-    clear: clearActivityLogs,
     stats: getActivityStats,
   },
   { singular: 'Activity record', plural: 'activity records' }

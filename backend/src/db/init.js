@@ -1,9 +1,37 @@
 const pool = require('./pool');
 const { DEFAULT_SYSTEM_CONFIG } = require('../config/defaultSystemConfig');
-const { buildFullPermissions, buildEmptyPermissions } = require('../config/permissionRegistry');
+const {
+  buildFullPermissions,
+  buildEmptyPermissions,
+  buildSeniorSupervisorPermissions,
+  buildSupervisorPermissions,
+  buildAgentDefaultPermissions,
+  SEEDED_ORG_ROLES,
+} = require('../config/permissionRegistry');
 const { hashPassword } = require('../services/passwordService');
 
 const DEFAULT_ADMIN_PASSWORD = 'ChangeMe123!';
+const DEFAULT_SENIOR_SUPERVISOR_EMAIL = 'senior.supervisor@omnicrm.com';
+const DEFAULT_SUPERVISOR_EMAIL = 'supervisor@omnicrm.com';
+const DEFAULT_AGENT_EMAIL = 'agent@omnicrm.com';
+const DEFAULT_ADMIN_EMAIL = 'admin@omnicrm.com';
+
+/** Demo emails for SEEDED_ORG_ROLES (local / development). */
+const SEEDED_ORG_ROLE_USERS = [
+  { email: 'tenant.admin@omnicrm.com', name: 'Tenant Administrator', roleName: 'Tenant Administrator' },
+  { email: 'executive@omnicrm.com', name: 'Executive', roleName: 'Executive' },
+  { email: 'general.manager@omnicrm.com', name: 'General Manager', roleName: 'General Manager' },
+  { email: 'regional.manager@omnicrm.com', name: 'Regional Manager', roleName: 'Regional Manager' },
+  { email: 'collections.manager@omnicrm.com', name: 'Collections Manager', roleName: 'Collections Manager' },
+  { email: 'callcentre.supervisor@omnicrm.com', name: 'Call Centre Supervisor', roleName: 'Call Centre Supervisor' },
+  { email: 'internal.agent@omnicrm.com', name: 'Internal Agent', roleName: 'Internal Agent' },
+  { email: 'external.supervisor@omnicrm.com', name: 'External Agent Supervisor', roleName: 'External Agent Supervisor' },
+  { email: 'external.agent@omnicrm.com', name: 'External Agent', roleName: 'External Agent' },
+  { email: 'customer.service@omnicrm.com', name: 'Customer Service Officer', roleName: 'Customer Service Officer' },
+  { email: 'compliance@omnicrm.com', name: 'Compliance Officer', roleName: 'Compliance Officer' },
+  { email: 'auditor@omnicrm.com', name: 'Auditor', roleName: 'Auditor' },
+  { email: 'report.viewer@omnicrm.com', name: 'Report Viewer', roleName: 'Report Viewer' },
+];
 
 async function addColumnIfNotExists(table, column, definition) {
   const [rows] = await pool.query(
@@ -143,7 +171,7 @@ async function initAuthTables() {
 
   const adminHash = hashPassword(DEFAULT_ADMIN_PASSWORD);
   await pool.query(
-    `UPDATE users SET password_hash = ?, must_reset_password = TRUE
+    `UPDATE users SET password_hash = ?, must_reset_password = FALSE
      WHERE email = 'admin@omnicrm.com' AND (password_hash IS NULL OR password_hash = '')`,
     [adminHash]
   );
@@ -206,12 +234,17 @@ async function initAccessControlTables() {
 
     await pool.query('INSERT INTO roles (name, is_system_admin, permissions) VALUES (?, FALSE, ?)', [
       'Agent',
-      JSON.stringify(buildEmptyPermissions()),
+      JSON.stringify(buildAgentDefaultPermissions()),
     ]);
 
     await pool.query('INSERT INTO roles (name, is_system_admin, permissions) VALUES (?, FALSE, ?)', [
-      'Manager',
-      JSON.stringify(buildEmptyPermissions()),
+      'Supervisor',
+      JSON.stringify(buildSupervisorPermissions()),
+    ]);
+
+    await pool.query('INSERT INTO roles (name, is_system_admin, permissions) VALUES (?, FALSE, ?)', [
+      'Senior Supervisor',
+      JSON.stringify(buildSeniorSupervisorPermissions()),
     ]);
   }
 
@@ -221,19 +254,147 @@ async function initAccessControlTables() {
     JSON.stringify(buildFullPermissions()),
   ]);
 
-  const [userRows] = await pool.query('SELECT id FROM users LIMIT 1');
-  if (userRows.length === 0) {
-    const [adminRole] = await pool.query(
+  // Keep Senior Supervisor in sync with the registry (includes all reports RO).
+  await pool.query('UPDATE roles SET permissions = ? WHERE name = ?', [
+    JSON.stringify(buildSeniorSupervisorPermissions()),
+    'Senior Supervisor',
+  ]);
+
+  // Migrate legacy Manager → Supervisor (idempotent).
+  const [managerRole] = await pool.query(
+    `SELECT id FROM roles WHERE name = 'Manager' LIMIT 1`
+  );
+  const [supervisorRoleExisting] = await pool.query(
+    `SELECT id FROM roles WHERE name = 'Supervisor' LIMIT 1`
+  );
+  if (managerRole[0] && !supervisorRoleExisting[0]) {
+    await pool.query(`UPDATE roles SET name = 'Supervisor', permissions = ? WHERE id = ?`, [
+      JSON.stringify(buildSupervisorPermissions()),
+      managerRole[0].id,
+    ]);
+  } else if (managerRole[0] && supervisorRoleExisting[0]) {
+    await pool.query(`UPDATE users SET role_id = ? WHERE role_id = ?`, [
+      supervisorRoleExisting[0].id,
+      managerRole[0].id,
+    ]);
+    await pool.query(`DELETE FROM roles WHERE id = ?`, [managerRole[0].id]);
+  }
+
+  // Ensure hierarchy roles exist on upgraded installs; backfill empty matrices only.
+  await ensureRole('Senior Supervisor', buildSeniorSupervisorPermissions(), { onlyIfEmpty: true });
+  await ensureRole('Supervisor', buildSupervisorPermissions(), { onlyIfEmpty: true });
+  await ensureRole('Agent', buildAgentDefaultPermissions(), { onlyIfEmpty: true });
+
+  // Additional org roles (alongside existing hierarchy); backfill empty matrices only.
+  for (const role of SEEDED_ORG_ROLES) {
+    await ensureRole(role.name, role.build(), { onlyIfEmpty: true });
+  }
+
+  // Idempotent seed users — one demo account per platform role.
+  // Password is always DEFAULT_ADMIN_PASSWORD; demo accounts are not forced to reset.
+  await ensureSeededUser({
+    email: DEFAULT_ADMIN_EMAIL,
+    name: 'System Admin',
+    roleName: 'System Admin',
+    isSystemAdmin: true,
+  });
+  await ensureSeededUser({
+    email: DEFAULT_SENIOR_SUPERVISOR_EMAIL,
+    name: 'Senior Supervisor',
+    roleName: 'Senior Supervisor',
+  });
+  await ensureSeededUser({
+    email: DEFAULT_SUPERVISOR_EMAIL,
+    name: 'Supervisor',
+    roleName: 'Supervisor',
+  });
+  await ensureSeededUser({
+    email: DEFAULT_AGENT_EMAIL,
+    name: 'Agent',
+    roleName: 'Agent',
+  });
+
+  for (const user of SEEDED_ORG_ROLE_USERS) {
+    await ensureSeededUser(user);
+  }
+
+  // Clear forced-reset on known demo seed emails (existing installs).
+  const seedEmails = [
+    DEFAULT_ADMIN_EMAIL,
+    DEFAULT_SENIOR_SUPERVISOR_EMAIL,
+    DEFAULT_SUPERVISOR_EMAIL,
+    DEFAULT_AGENT_EMAIL,
+    ...SEEDED_ORG_ROLE_USERS.map((u) => u.email),
+  ];
+  await pool.query(
+    `UPDATE users SET must_reset_password = FALSE
+     WHERE must_reset_password = TRUE AND email IN (?)`,
+    [seedEmails]
+  );
+}
+
+/** Create a seed user if the email does not already exist. */
+async function ensureSeededUser({ email, name, roleName, isSystemAdmin = false }) {
+  const [existing] = await pool.query(
+    'SELECT id FROM users WHERE email = ? LIMIT 1',
+    [email]
+  );
+  if (existing[0]) return;
+
+  let roleId = null;
+  if (isSystemAdmin) {
+    const [rows] = await pool.query(
       'SELECT id FROM roles WHERE is_system_admin = TRUE LIMIT 1'
     );
-    if (adminRole[0]?.id) {
-      const adminHash = hashPassword(DEFAULT_ADMIN_PASSWORD);
-      await pool.query(
-        `INSERT INTO users (name, email, role_id, is_active, password_hash, must_reset_password)
-         VALUES (?, ?, ?, TRUE, ?, TRUE)`,
-        ['System Admin', 'admin@omnicrm.com', adminRole[0].id, adminHash]
+    roleId = rows[0]?.id || null;
+  } else {
+    const [rows] = await pool.query(
+      'SELECT id FROM roles WHERE name = ? LIMIT 1',
+      [roleName]
+    );
+    roleId = rows[0]?.id || null;
+  }
+  if (!roleId) return;
+
+  const passwordHash = hashPassword(DEFAULT_ADMIN_PASSWORD);
+  await pool.query(
+    `INSERT INTO users (name, email, role_id, is_active, password_hash, must_reset_password)
+     VALUES (?, ?, ?, TRUE, ?, FALSE)`,
+    [name, email, roleId, passwordHash]
+  );
+}
+
+async function ensureRole(name, permissions, { onlyIfEmpty = false } = {}) {
+  const [rows] = await pool.query('SELECT id, permissions FROM roles WHERE name = ? LIMIT 1', [name]);
+  if (!rows[0]) {
+    await pool.query(
+      'INSERT INTO roles (name, is_system_admin, permissions) VALUES (?, FALSE, ?)',
+      [name, JSON.stringify(permissions)]
+    );
+    return;
+  }
+  if (!onlyIfEmpty) return;
+  // Backfill empty Agent/Supervisor matrices once so new installs are usable.
+  try {
+    const perms =
+      typeof rows[0].permissions === 'string'
+        ? JSON.parse(rows[0].permissions)
+        : rows[0].permissions || {};
+    const hasAny = Object.values(perms).some((mod) => {
+      if (!mod || typeof mod !== 'object') return false;
+      if ('read' in mod) return Boolean(mod.read || mod.create || mod.update || mod.delete);
+      return Object.values(mod).some(
+        (crud) => crud && (crud.read || crud.create || crud.update || crud.delete)
       );
+    });
+    if (!hasAny) {
+      await pool.query('UPDATE roles SET permissions = ? WHERE id = ?', [
+        JSON.stringify(permissions),
+        rows[0].id,
+      ]);
     }
+  } catch {
+    /* ignore parse errors */
   }
 }
 
@@ -569,6 +730,8 @@ async function initTemplateTables() {
   // template has been chosen yet.
   await seedAccountDeletedTemplates();
   await seedCaseAssignmentTemplates();
+  // Debtor outreach templates used by agents from My Portfolio (SMS / Email).
+  await seedPaymentReminderTemplates();
 }
 
 async function ensureTemplateVariable(key, label, description, exampleValue, category) {
@@ -709,15 +872,189 @@ async function seedCaseAssignmentTemplates() {
   }
 }
 
+const PAYMENT_REMINDER_EMAIL_BODY = `<div style="font-family: system-ui, -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+  <h2 style="color: #111; margin-bottom: 8px;">Payment reminder — {{business_name}}</h2>
+  <p style="margin: 0 0 12px;">Dear {{name}},</p>
+  <p style="margin: 0 0 12px;">
+    This is a friendly reminder that your account <strong>{{account_number}}</strong> has an outstanding balance of
+    <strong>{{amount}}</strong>, due on <strong>{{due_date}}</strong>.
+  </p>
+  <p style="background: #f5f6f8; border: 1px solid #e3e6ea; border-radius: 10px; padding: 12px 16px; color: #555; font-size: 14px; margin: 12px 0;">
+    Please arrange payment at your earliest convenience. Your assigned agent is <strong>{{agent_name}}</strong>.
+    If you have already paid, kindly disregard this message.
+  </p>
+  <p style="color: #777; font-size: 13px;">Thank you for your attention.<br/>{{business_name}}</p>
+</div>`;
+
+const PAYMENT_REMINDER_SMS_BODY =
+  'Hi {{name}}, this is {{agent_name}} from {{business_name}}. Your account {{account_number}} has an outstanding balance of {{amount}}. Please arrange payment or contact us. Thank you.';
+
+const OVERDUE_PAYMENT_EMAIL_BODY = `<div style="font-family: system-ui, -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+  <h2 style="color: #111; margin-bottom: 8px;">Overdue payment notice — {{business_name}}</h2>
+  <p style="margin: 0 0 12px;">Dear {{name}},</p>
+  <p style="margin: 0 0 12px;">
+    Our records show that payment on account <strong>{{account_number}}</strong> is overdue.
+    The outstanding balance is <strong>{{amount}}</strong>, which was due on <strong>{{due_date}}</strong>.
+  </p>
+  <p style="background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 12px 16px; color: #9a3412; font-size: 14px; margin: 12px 0;">
+    Please settle this amount as soon as possible to avoid further follow-up. Contact your agent
+    <strong>{{agent_name}}</strong> if you need help arranging a payment plan.
+  </p>
+  <p style="color: #777; font-size: 13px;">If you have already made payment, please ignore this notice.<br/>{{business_name}}</p>
+</div>`;
+
+const OVERDUE_PAYMENT_SMS_BODY =
+  'Hi {{name}}, your {{business_name}} account {{account_number}} is overdue with a balance of {{amount}}. Please pay urgently or contact {{agent_name}} to arrange a plan.';
+
+const PTP_FOLLOWUP_EMAIL_BODY = `<div style="font-family: system-ui, -apple-system, sans-serif; max-width: 560px; margin: 0 auto; color: #111;">
+  <h2 style="color: #111; margin-bottom: 8px;">Promise to pay reminder — {{business_name}}</h2>
+  <p style="margin: 0 0 12px;">Dear {{name}},</p>
+  <p style="margin: 0 0 12px;">
+    This is a reminder about the payment you promised for account <strong>{{account_number}}</strong>.
+    The outstanding balance is <strong>{{amount}}</strong>.
+  </p>
+  <p style="background: #f5f6f8; border: 1px solid #e3e6ea; border-radius: 10px; padding: 12px 16px; color: #555; font-size: 14px; margin: 12px 0;">
+    Kindly complete the payment as agreed. If your situation has changed, please contact
+    <strong>{{agent_name}}</strong> so we can assist you.
+  </p>
+  <p style="color: #777; font-size: 13px;">Thank you.<br/>{{business_name}}</p>
+</div>`;
+
+const PTP_FOLLOWUP_SMS_BODY =
+  'Hi {{name}}, reminder from {{agent_name}} ({{business_name}}): please complete the promised payment on account {{account_number}}. Outstanding: {{amount}}. Contact us if you need help.';
+
+/**
+ * Insert a system-wide email/SMS template pair when missing (idempotent by name).
+ */
+async function ensureSystemTemplatePair({ name, emailSubject, emailBody, smsBody }) {
+  const [emailRows] = await pool.query(
+    'SELECT id FROM email_templates WHERE name = ? AND client_id IS NULL LIMIT 1',
+    [name]
+  );
+  if (emailRows.length === 0) {
+    await pool.query(
+      'INSERT INTO email_templates (client_id, name, subject, body) VALUES (NULL, ?, ?, ?)',
+      [name, emailSubject, emailBody]
+    );
+  }
+
+  const [smsRows] = await pool.query(
+    'SELECT id FROM sms_templates WHERE name = ? AND client_id IS NULL LIMIT 1',
+    [name]
+  );
+  if (smsRows.length === 0) {
+    await pool.query(
+      'INSERT INTO sms_templates (client_id, name, body) VALUES (NULL, ?, ?)',
+      [name, smsBody]
+    );
+  }
+}
+
+async function seedPaymentReminderTemplates() {
+  await ensureSystemTemplatePair({
+    name: 'Payment Reminder',
+    emailSubject: '{{business_name}}: payment reminder for account {{account_number}}',
+    emailBody: PAYMENT_REMINDER_EMAIL_BODY,
+    smsBody: PAYMENT_REMINDER_SMS_BODY,
+  });
+
+  await ensureSystemTemplatePair({
+    name: 'Overdue Payment Reminder',
+    emailSubject: '{{business_name}}: overdue payment on account {{account_number}}',
+    emailBody: OVERDUE_PAYMENT_EMAIL_BODY,
+    smsBody: OVERDUE_PAYMENT_SMS_BODY,
+  });
+
+  await ensureSystemTemplatePair({
+    name: 'Promise to Pay Follow-up',
+    emailSubject: '{{business_name}}: promise to pay reminder — {{account_number}}',
+    emailBody: PTP_FOLLOWUP_EMAIL_BODY,
+    smsBody: PTP_FOLLOWUP_SMS_BODY,
+  });
+}
+
+async function initCallCenterTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS call_centers (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(160) NOT NULL,
+      description VARCHAR(255) NULL,
+      status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+      created_by INT NULL,
+      deleted_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_call_centers_name (name),
+      INDEX idx_call_centers_status (status),
+      INDEX idx_call_centers_deleted_at (deleted_at),
+      CONSTRAINT fk_call_centers_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  await addColumnIfNotExists('users', 'call_center_id', 'INT NULL DEFAULT NULL');
+  await addIndexIfNotExists('users', 'idx_users_call_center_id', 'call_center_id');
+
+  try {
+    const [fks] = await pool.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'call_center_id'
+         AND REFERENCED_TABLE_NAME = 'call_centers'
+       LIMIT 1`
+    );
+    if (!fks[0]) {
+      await pool.query(
+        `ALTER TABLE users
+         ADD CONSTRAINT fk_users_call_center
+         FOREIGN KEY (call_center_id) REFERENCES call_centers(id) ON DELETE SET NULL`
+      );
+    }
+  } catch (error) {
+    console.warn('[db] users.call_center_id FK:', error.message);
+  }
+
+  // clients table is created in initDebtorTables — only alter when present.
+  const [clientTable] = await pool.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients'`
+  );
+  if (Number(clientTable[0]?.cnt) > 0) {
+    await addColumnIfNotExists('clients', 'call_center_id', 'INT NULL DEFAULT NULL');
+    await addColumnIfNotExists('clients', 'call_center_assigned_at', 'TIMESTAMP NULL DEFAULT NULL');
+    await addColumnIfNotExists('clients', 'call_center_assigned_by', 'INT NULL DEFAULT NULL');
+    await addIndexIfNotExists('clients', 'idx_clients_call_center_id', 'call_center_id');
+
+    try {
+      const [fks] = await pool.query(
+        `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clients' AND COLUMN_NAME = 'call_center_id'
+           AND REFERENCED_TABLE_NAME = 'call_centers'
+         LIMIT 1`
+      );
+      if (!fks[0]) {
+        await pool.query(
+          `ALTER TABLE clients
+           ADD CONSTRAINT fk_clients_call_center
+           FOREIGN KEY (call_center_id) REFERENCES call_centers(id) ON DELETE SET NULL`
+        );
+      }
+    } catch (error) {
+      console.warn('[db] clients.call_center_id FK:', error.message);
+    }
+  }
+}
+
 async function initDatabase() {
   await initSystemConfigTable();
   await initAccessControlTables();
   await initAuthTables();
+  await initCallCenterTables();
   await initNotificationsTable();
   await initReportAccessTable();
   await initAuditTables();
   await initTemplateTables();
   await initDebtorTables();
+  // Re-run after clients exist so client call-center columns are applied.
+  await initCallCenterTables();
   await initDebtConfigTables();
   await initAgentTables();
   await initCommissionTables();
@@ -1054,14 +1391,132 @@ async function initDebtConfigTables() {
   await addColumnIfNotExists('debtors', 'contact_status_id', 'INT NULL DEFAULT NULL');
   await addColumnIfNotExists('debtors', 'last_contacted_at', 'TIMESTAMP NULL DEFAULT NULL');
   await addColumnIfNotExists('debtors', 'next_action_date', 'DATE NULL DEFAULT NULL');
+  await addColumnIfNotExists('debtors', 'last_contact_channel', "ENUM('call','sms','email') NULL DEFAULT NULL");
   await addIndexIfNotExists('debtors', 'idx_debtors_contact_status', 'contact_status_id');
   await addIndexIfNotExists('debtors', 'idx_debtors_next_action', 'next_action_date');
+  await addIndexIfNotExists('debtors', 'idx_debtors_last_contact_channel', 'last_contact_channel');
+
+  // ── contact_attempts ── every call / SMS / email wrap-up by an agent
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contact_attempts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      debtor_id INT NOT NULL,
+      agent_id INT NOT NULL,
+      channel ENUM('call','sms','email') NOT NULL,
+      contact_status_id INT NULL,
+      notes TEXT NULL,
+      message_body TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_contact_attempts_debtor_created (debtor_id, created_at),
+      INDEX idx_contact_attempts_agent_created (agent_id, created_at),
+      INDEX idx_contact_attempts_channel (channel),
+      CONSTRAINT fk_contact_attempts_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE CASCADE,
+      CONSTRAINT fk_contact_attempts_agent FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_contact_attempts_status FOREIGN KEY (contact_status_id) REFERENCES contact_statuses(id) ON DELETE SET NULL
+    )
+  `);
+
+  // ── agent_sim_cards ── numbers agents use for AT voice (in + out)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_sim_cards (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      label VARCHAR(80) NOT NULL DEFAULT 'SIM',
+      phone_number VARCHAR(32) NOT NULL,
+      supports_outbound TINYINT(1) NOT NULL DEFAULT 1,
+      supports_inbound TINYINT(1) NOT NULL DEFAULT 1,
+      is_default TINYINT(1) NOT NULL DEFAULT 0,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      provider VARCHAR(40) NOT NULL DEFAULT 'africastalking',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_agent_sim_user_phone (user_id, phone_number),
+      INDEX idx_agent_sim_phone (phone_number),
+      INDEX idx_agent_sim_user_active (user_id, is_active),
+      CONSTRAINT fk_agent_sim_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ── voice_calls ── Africa's Talking inbound + outbound CDR
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS voice_calls (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      debtor_id INT NULL,
+      agent_id INT NOT NULL,
+      sim_card_id INT NULL,
+      direction ENUM('inbound','outbound') NOT NULL,
+      provider VARCHAR(40) NOT NULL DEFAULT 'africastalking',
+      provider_session_id VARCHAR(120) NULL,
+      client_request_id VARCHAR(120) NULL,
+      from_number VARCHAR(32) NULL,
+      to_number VARCHAR(32) NULL,
+      agent_number VARCHAR(32) NULL,
+      debtor_number VARCHAR(32) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'queued',
+      duration_seconds INT NULL,
+      recording_url VARCHAR(500) NULL,
+      started_at TIMESTAMP NULL,
+      ended_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_voice_calls_debtor_created (debtor_id, created_at),
+      INDEX idx_voice_calls_agent_created (agent_id, created_at),
+      INDEX idx_voice_calls_session (provider_session_id),
+      INDEX idx_voice_calls_client_req (client_request_id),
+      CONSTRAINT fk_voice_calls_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE SET NULL,
+      CONSTRAINT fk_voice_calls_agent FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_voice_calls_sim FOREIGN KEY (sim_card_id) REFERENCES agent_sim_cards(id) ON DELETE SET NULL
+    )
+  `);
+
+  // ── ptp_arrangements ── promise-to-pay records + agent follow-up reminders
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ptp_arrangements (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      debtor_id INT NOT NULL,
+      agent_id INT NOT NULL,
+      contact_attempt_id INT NULL,
+      promised_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+      promise_date DATE NULL,
+      reminder_date DATE NULL,
+      status ENUM('pending','kept','broken','cancelled') NOT NULL DEFAULT 'pending',
+      channel ENUM('call','sms','email') NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ptp_reminder (reminder_date),
+      INDEX idx_ptp_status (status),
+      INDEX idx_ptp_agent (agent_id),
+      INDEX idx_ptp_debtor (debtor_id),
+      CONSTRAINT fk_ptp_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ptp_agent FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_ptp_attempt FOREIGN KEY (contact_attempt_id) REFERENCES contact_attempts(id) ON DELETE SET NULL
+    )
+  `);
 
   // ── Per-debtor case closure (Closed Files page) ──
   await addColumnIfNotExists('debtors', 'is_closed', 'TINYINT(1) NOT NULL DEFAULT 0');
   await addColumnIfNotExists('debtors', 'closure_reason', 'VARCHAR(120) NULL DEFAULT NULL');
   await addColumnIfNotExists('debtors', 'closed_at', 'TIMESTAMP NULL DEFAULT NULL');
   await addIndexIfNotExists('debtors', 'idx_debtors_closed', 'is_closed');
+
+  // Debtor Summary / filtered snapshot report access paths
+  await addIndexIfNotExists(
+    'debtors',
+    'idx_debtors_open_client',
+    'deleted_at, is_closed, client_id'
+  );
+  await addIndexIfNotExists(
+    'debtors',
+    'idx_debtors_open_agent',
+    'deleted_at, is_closed, assigned_agent'
+  );
+  await addIndexIfNotExists(
+    'debtors',
+    'idx_debtors_open_bucket',
+    'deleted_at, is_closed, bucket'
+  );
+  await addIndexIfNotExists('debtors', 'idx_debtors_outstanding', 'outstanding_balance');
 
   // Closed-file flag on the batch file (advanced filter "Closed File").
   await addColumnIfNotExists('debtor_files', 'is_closed', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -1073,6 +1528,12 @@ async function initDebtConfigTables() {
     'idx_debtor_files_client_batch_date',
     'client_id, batch_date'
   );
+
+  // File-level call center bind (Senior Supervisor upload → center supervisors).
+  await addColumnIfNotExists('debtor_files', 'call_center_id', 'INT NULL DEFAULT NULL');
+  await addColumnIfNotExists('debtor_files', 'call_center_assigned_at', 'TIMESTAMP NULL DEFAULT NULL');
+  await addColumnIfNotExists('debtor_files', 'call_center_assigned_by', 'INT NULL DEFAULT NULL');
+  await addIndexIfNotExists('debtor_files', 'idx_debtor_files_call_center', 'call_center_id');
 }
 
 // ── Commissions ── payments ledger (populated from daily upload deltas on
@@ -1239,6 +1700,8 @@ async function backfillPaymentsFromSnapshot() {
         currencyId: d.currency_id || null,
         agentName: d.assigned_agent || null,
         defaultRate,
+        // One-time seed backfill — avoid flooding timelines with historical rows.
+        recordActivity: false,
       });
       backfilled += 1;
     } catch (error) {
@@ -1259,6 +1722,7 @@ module.exports = {
   initSystemConfigTable,
   initAccessControlTables,
   initAuthTables,
+  initCallCenterTables,
   initNotificationsTable,
   initReportAccessTable,
   initAuditTables,

@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, Fingerprint, KeyRound, LogOut, Menu, Moon, Settings, Sun, UserPen } from 'lucide-react';
+import {
+  ChevronDown,
+  Fingerprint,
+  KeyRound,
+  LogOut,
+  Menu,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  Sun,
+  UserPen,
+} from 'lucide-react';
 import { useSystemConfig } from '../context/SystemConfigContext';
 import { useTheme } from '../context/ThemeContext';
 import { getUserInitials, useUser } from '../context/UserContext';
@@ -127,7 +139,14 @@ function TopNavMobileBrand() {
   return <span className="top-nav-mobile-brand-name">{businessName}</span>;
 }
 
-function TopNav({ onMenuToggle, pageTitle, pageDescription, showStickyTitle }) {
+function TopNav({
+  onMenuToggle,
+  onSidebarToggle,
+  sidebarCollapsed = false,
+  pageTitle,
+  pageDescription,
+  showStickyTitle,
+}) {
   const { colorMode, toggleColorMode } = useTheme();
   const notifications = useNotifications();
   const desktopNavClassName = showStickyTitle
@@ -174,12 +193,28 @@ function TopNav({ onMenuToggle, pageTitle, pageDescription, showStickyTitle }) {
       </header>
 
       <header className={desktopNavClassName}>
-        <div
-          className={showStickyTitle ? 'top-nav-page-meta is-visible' : 'top-nav-page-meta'}
-          aria-hidden={!showStickyTitle}
-        >
-          <p className="top-nav-page-title">{pageTitle}</p>
-          {pageDescription && <p className="top-nav-page-description">{pageDescription}</p>}
+        <div className="top-nav-desktop-left">
+          <button
+            type="button"
+            className="menu-toggle menu-toggle-desktop"
+            onClick={onSidebarToggle}
+            aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+            title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+          >
+            {sidebarCollapsed ? (
+              <PanelLeftOpen className="menu-toggle-icon" />
+            ) : (
+              <PanelLeftClose className="menu-toggle-icon" />
+            )}
+          </button>
+
+          <div
+            className={showStickyTitle ? 'top-nav-page-meta is-visible' : 'top-nav-page-meta'}
+            aria-hidden={!showStickyTitle}
+          >
+            <p className="top-nav-page-title">{pageTitle}</p>
+            {pageDescription && <p className="top-nav-page-description">{pageDescription}</p>}
+          </div>
         </div>
 
         <div className="top-nav-right">

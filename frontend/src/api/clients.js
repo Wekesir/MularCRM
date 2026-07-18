@@ -1,7 +1,17 @@
 import api from './client';
 
-export async function fetchClients() {
-  const { data } = await api.get('/api/clients');
+export async function fetchClients({ unassignedOnly = false } = {}) {
+  const { data } = await api.get('/api/clients', {
+    params: unassignedOnly ? { unassignedOnly: 1 } : undefined,
+  });
+  return data;
+}
+
+export async function assignClientCallCenter(clientId, callCenterId, { force = false } = {}) {
+  const { data } = await api.patch(`/api/clients/${clientId}/call-center`, {
+    callCenterId,
+    force,
+  });
   return data;
 }
 

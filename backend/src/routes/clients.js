@@ -6,6 +6,8 @@ const {
   createClient,
   updateClient,
   deleteClient,
+  assignClientCallCenter,
+  assertCallerCanAccessClient,
 } = require('../services/clientService');
 const { sendOnboardingNotifications } = require('../services/onboardingNotifications');
 const {
@@ -17,10 +19,29 @@ const {
 } = require('../services/clientBulkUploadService');
 const { recordActivityEvent } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
+const { getUserEffectivePermissions } = require('../services/userService');
+const { isSeniorSupervisorRole } = require('../config/orgRoles');
 
 const router = express.Router();
 
 router.use(requireAuth);
+
+async function assertCanManageClients(user, action) {
+  if (!user) {
+    const err = new Error('Authentication required');
+    err.status = 401;
+    throw err;
+  }
+  if (user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
+  const perms = await getUserEffectivePermissions(user.id);
+  const node = perms?.management?.client_management;
+  if (action === 'create' && node?.create) return;
+  if (action === 'update' && node?.update) return;
+  if (action === 'delete' && node?.delete) return;
+  const err = new Error('You do not have permission to manage clients');
+  err.status = 403;
+  throw err;
+}
 
 // In-memory multipart upload for the bulk Excel file. .xlsx only, ~5MB cap.
 const upload = multer({
@@ -38,9 +59,11 @@ const upload = multer({
   },
 });
 
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const clients = await listClients();
+    const unassignedOnly =
+      req.query.unassignedOnly === '1' || req.query.unassignedOnly === 'true';
+    const clients = await listClients({ user: req.user, unassignedOnly });
     res.json(clients);
   } catch (error) {
     res.status(500).json({ message: 'Failed to list clients', detail: error.message });
@@ -50,12 +73,16 @@ router.get('/', async (_req, res) => {
 // Download the strict client-upload template (styled header + business-type
 // dropdown validation + example row). Registered before '/:id' so the literal
 // "template" segment is not captured as an id.
-router.get('/template', async (_req, res) => {
+router.get('/template', async (req, res) => {
   try {
+    await assertCanManageClients(req.user, 'create');
     const buffer = await generateTemplateBuffer();
     res.set(templateHeaders());
     return res.status(200).send(Buffer.from(buffer));
   } catch (error) {
+    if (error.status === 403 || error.status === 401) {
+      return res.status(error.status).json({ message: error.message });
+    }
     console.error('[clients] template generation failed:', error);
     return res.status(500).json({ message: 'Failed to generate template', detail: error.message });
   }
@@ -64,15 +91,23 @@ router.get('/template', async (_req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const client = await getClientById(req.params.id);
-    if (!client) return res.status(404).json({ message: 'Client not found' });
+    if (!client || client.deletedAt) return res.status(404).json({ message: 'Client not found' });
+    await assertCallerCanAccessClient(req.user, client.id);
     res.json(client);
   } catch (error) {
+    if (error.status === 403 || error.code === 'FORBIDDEN') {
+      return res.status(403).json({ message: error.message });
+    }
+    if (error.status === 404 || error.code === 'NOT_FOUND') {
+      return res.status(404).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Failed to get client', detail: error.message });
   }
 });
 
 router.post('/', async (req, res) => {
   try {
+    await assertCanManageClients(req.user, 'create');
     const client = await createClient(req.body);
 
     // Welcome the client via email + SMS. Failures are surfaced in the
@@ -93,6 +128,9 @@ router.post('/', async (req, res) => {
       entityId: String(client.id),
     }).catch(() => {});
   } catch (error) {
+    if (error.status === 403 || error.status === 401) {
+      return res.status(error.status).json({ message: error.message });
+    }
     if (error.code === 'VALIDATION') {
       return res.status(400).json({ message: error.message });
     }
@@ -108,6 +146,8 @@ router.post('/', async (req, res) => {
 // invalid rows are skipped and reported back with their Excel row number.
 router.post('/bulk-upload', upload.single('file'), async (req, res) => {
   try {
+    await assertCanManageClients(req.user, 'create');
+
     if (!req.file) {
       return res.status(400).json({ message: 'No file was uploaded. Please choose an .xlsx file.' });
     }
@@ -128,6 +168,9 @@ router.post('/bulk-upload', upload.single('file'), async (req, res) => {
     }
     return res.status(200).json(result);
   } catch (error) {
+    if (error.status === 403 || error.status === 401) {
+      return res.status(error.status).json({ message: error.message });
+    }
     if (error instanceof BulkUploadError) {
       const status = error.code === 'INVALID_FILE' || error.code === 'INVALID_STRUCTURE' ? 400 : 422;
       return res.status(status).json({ message: error.message });
@@ -146,8 +189,35 @@ router.post('/bulk-upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// Once-only client → call center assignment (Admin may force reassign).
+router.patch('/:id/call-center', async (req, res) => {
+  try {
+    const client = await assignClientCallCenter(req.params.id, req.body?.callCenterId, {
+      performedBy: req.user,
+      force: Boolean(req.body?.force),
+    });
+    res.json(client);
+  } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message, code: error.code });
+    }
+    if (error.code === 'NOT_FOUND') {
+      return res.status(404).json({ message: error.message });
+    }
+    if (
+      error.code === 'VALIDATION' ||
+      error.code === 'ALREADY_ASSIGNED'
+    ) {
+      return res.status(400).json({ message: error.message, code: error.code });
+    }
+    res.status(500).json({ message: 'Failed to assign call center', detail: error.message });
+  }
+});
+
 router.put('/:id', async (req, res) => {
   try {
+    await assertCanManageClients(req.user, 'update');
+    await assertCallerCanAccessClient(req.user, req.params.id);
     const client = await updateClient(req.params.id, req.body);
     if (!client) return res.status(404).json({ message: 'Client not found' });
     res.json(client);
@@ -161,6 +231,12 @@ router.put('/:id', async (req, res) => {
       entityId: String(client.id),
     }).catch(() => {});
   } catch (error) {
+    if (error.status === 403 || error.status === 401 || error.code === 'FORBIDDEN') {
+      return res.status(error.status || 403).json({ message: error.message });
+    }
+    if (error.status === 404 || error.code === 'NOT_FOUND') {
+      return res.status(404).json({ message: error.message });
+    }
     if (error.code === 'VALIDATION') {
       return res.status(400).json({ message: error.message });
     }
@@ -173,6 +249,8 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
+    await assertCanManageClients(req.user, 'delete');
+    await assertCallerCanAccessClient(req.user, req.params.id);
     const existing = await getClientById(req.params.id);
     const result = await deleteClient(req.params.id);
     if (!result.deleted) return res.status(404).json({ message: 'Client not found' });
@@ -187,6 +265,12 @@ router.delete('/:id', async (req, res) => {
       entityId: req.params.id,
     }).catch(() => {});
   } catch (error) {
+    if (error.status === 403 || error.status === 401 || error.code === 'FORBIDDEN') {
+      return res.status(error.status || 403).json({ message: error.message });
+    }
+    if (error.status === 404 || error.code === 'NOT_FOUND') {
+      return res.status(404).json({ message: error.message });
+    }
     res.status(500).json({ message: 'Failed to delete client', detail: error.message });
   }
 });

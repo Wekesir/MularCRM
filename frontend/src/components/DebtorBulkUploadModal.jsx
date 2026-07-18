@@ -15,6 +15,7 @@ import {
   Check,
   Search,
   ChevronDown,
+  Headset,
 } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { downloadDebtorTemplate, bulkUploadDebtors } from '../api/debtors';
@@ -22,6 +23,8 @@ import { fetchClients } from '../api/clients';
 import { fetchDebtCategories } from '../api/debtCategories';
 import { fetchDebtTypes } from '../api/debtTypes';
 import { fetchCurrencies } from '../api/currencies';
+import { fetchCallCenters } from '../api/callCenters';
+import { usePermissions } from '../hooks/usePermissions';
 
 // ── Searchable client combobox ─────────────────────────────────────────────
 function ClientCombobox({ clients, value, onChange, disabled, loading }) {
@@ -190,6 +193,9 @@ function ClientCombobox({ clients, value, onChange, disabled, loading }) {
 }
 
 function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
+  const { isSystemAdmin, isSeniorSupervisor } = usePermissions();
+  const canPickCallCenter = isSystemAdmin || isSeniorSupervisor;
+
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -205,28 +211,45 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
   const [categories, setCategories] = useState([]);
   const [types, setTypes] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [callCenters, setCallCenters] = useState([]);
   const [clientId, setClientId] = useState('');
   const [debtCategoryId, setDebtCategoryId] = useState('');
   const [debtTypeId, setDebtTypeId] = useState('');
   const [currencyId, setCurrencyId] = useState('');
+  const [callCenterId, setCallCenterId] = useState('');
 
   const activeCategories = useMemo(() => categories.filter((c) => c.isActive), [categories]);
   const activeTypes = useMemo(() => types.filter((t) => t.isActive), [types]);
   const activeCurrencies = useMemo(() => currencies.filter((c) => c.isActive), [currencies]);
 
+  const selectedClient = useMemo(
+    () => clients.find((c) => String(c.id) === clientId) || null,
+    [clients, clientId]
+  );
+  const clientBoundCenterId = selectedClient?.callCenterId
+    ? String(selectedClient.callCenterId)
+    : '';
+  const clientBoundCenterName = selectedClient?.callCenterName || '';
+  const needsCallCenterSelect = canPickCallCenter && Boolean(clientId) && !clientBoundCenterId;
+  const effectiveCallCenterId = clientBoundCenterId || callCenterId;
+
   const loadLookups = async () => {
     setIsLoadingLookups(true);
     try {
-      const [c, cat, t, cur] = await Promise.all([
+      const [c, cat, t, cur, centers] = await Promise.all([
         fetchClients(),
         fetchDebtCategories(),
         fetchDebtTypes(),
         fetchCurrencies(),
+        canPickCallCenter
+          ? fetchCallCenters({ includeInactive: false }).catch(() => [])
+          : Promise.resolve([]),
       ]);
-      setClients(c);
+      setClients(Array.isArray(c) ? c : c?.items || []);
       setCategories(cat);
       setTypes(t);
       setCurrencies(cur);
+      setCallCenters(Array.isArray(centers) ? centers : centers?.items || []);
       const def = cur.find((x) => x.isDefault && x.isActive) || cur.find((x) => x.isActive);
       setCurrencyId(def ? String(def.id) : '');
     } catch {
@@ -251,12 +274,24 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
       setClientId('');
       setDebtCategoryId('');
       setDebtTypeId('');
+      setCallCenterId('');
       setIsDragging(false);
       dragCounter.current = 0;
       loadLookups();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // When client already has a center, lock to it; clear manual pick otherwise.
+  useEffect(() => {
+    if (clientBoundCenterId) {
+      setCallCenterId(clientBoundCenterId);
+    } else if (!clientId) {
+      setCallCenterId('');
+    } else {
+      setCallCenterId('');
+    }
+  }, [clientId, clientBoundCenterId]);
 
   if (!open) return null;
 
@@ -323,12 +358,26 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
     }
   };
 
-  const selectionsReady = Boolean(clientId && debtCategoryId && debtTypeId && currencyId);
+  const selectionsReady = Boolean(
+    clientId &&
+      debtCategoryId &&
+      debtTypeId &&
+      currencyId &&
+      effectiveCallCenterId
+  );
   const canUpload = Boolean(file) && selectionsReady && !isUploading;
 
   const handleUpload = async () => {
-    if (!selectionsReady) {
+    if (!clientId || !debtCategoryId || !debtTypeId || !currencyId) {
       setError('Please select a Client, Debt Category, Debt Type and Currency before uploading.');
+      return;
+    }
+    if (!effectiveCallCenterId) {
+      setError(
+        canPickCallCenter
+          ? 'Select a call center for this upload (or assign the client to a center first).'
+          : 'This client is not assigned to a call center. Ask a Senior Supervisor to assign the client or upload with a center selected.'
+      );
       return;
     }
     if (!file) {
@@ -338,7 +387,13 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
     setIsUploading(true);
     setError('');
     try {
-      const res = await bulkUploadDebtors(file, { clientId, debtCategoryId, debtTypeId, currencyId });
+      const res = await bulkUploadDebtors(file, {
+        clientId,
+        debtCategoryId,
+        debtTypeId,
+        currencyId,
+        callCenterId: effectiveCallCenterId || undefined,
+      });
       setResult(res);
       if (typeof onCompleted === 'function') onCompleted(res);
     } catch (err) {
@@ -360,10 +415,11 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
   const hasFailures = failedCount > 0;
   const hasResult = Boolean(result);
 
-  const selectedClient = clients.find((c) => String(c.id) === clientId);
   const selectedCategory = activeCategories.find((c) => String(c.id) === debtCategoryId);
   const selectedType = activeTypes.find((t) => String(t.id) === debtTypeId);
   const selectedCurrency = activeCurrencies.find((c) => String(c.id) === currencyId);
+  const selectedCallCenter =
+    callCenters.find((c) => String(c.id) === effectiveCallCenterId) || null;
 
   return (
     <div className="modal-backdrop modal-backdrop-static" role="presentation">
@@ -439,8 +495,8 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
               <div className="dbu-step-meta">
                 <p className="dbu-step-title">Set the batch context</p>
                 <p className="dbu-step-desc">
-                  Every imported debtor will be tagged with all four selections. You can manage
-                  these options under Settings.
+                  Every imported debtor will be tagged with these selections. Call-center binding
+                  routes the batch to that center&apos;s supervisors for agent allocation.
                 </p>
               </div>
             </div>
@@ -459,6 +515,79 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
                   loading={isLoadingLookups}
                 />
               </div>
+
+              {canPickCallCenter && (
+                <div className="cf-field">
+                  <span className="cf-label">
+                    <Headset className="dbu-label-icon" />
+                    Call center <span className="cf-required" aria-hidden="true">*</span>
+                  </span>
+                  {clientBoundCenterId ? (
+                    <div className="dbu-locked-center" title="Inherited from the selected client">
+                      <p className="dbu-locked-center-name">
+                        {clientBoundCenterName || selectedCallCenter?.name || `Center #${clientBoundCenterId}`}
+                      </p>
+                      <p className="dbu-locked-center-hint">
+                        Automatic — this client is already assigned to this call center.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="cf-select-wrap">
+                      <select
+                        className="cf-select"
+                        value={callCenterId}
+                        onChange={(e) => setCallCenterId(e.target.value)}
+                        disabled={isUploading || isLoadingLookups || !clientId}
+                      >
+                        <option value="">
+                          {!clientId
+                            ? 'Select a client first…'
+                            : isLoadingLookups
+                              ? 'Loading…'
+                              : 'Select a call center…'}
+                        </option>
+                        {callCenters.map((center) => (
+                          <option key={center.id} value={String(center.id)}>
+                            {center.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {needsCallCenterSelect && (
+                    <p className="dbu-field-hint">
+                      Supervisors in this center will see the batch on Unassigned Files and can allocate it to agents.
+                    </p>
+                  )}
+                </div>
+              )}
+              {!canPickCallCenter && clientId && clientBoundCenterId && (
+                <div className="cf-field">
+                  <span className="cf-label">
+                    <Headset className="dbu-label-icon" />
+                    Call center
+                  </span>
+                  <div className="dbu-locked-center" title="Inherited from the selected client">
+                    <p className="dbu-locked-center-name">
+                      {clientBoundCenterName || `Center #${clientBoundCenterId}`}
+                    </p>
+                    <p className="dbu-locked-center-hint">
+                      Automatic — this client is already assigned to this call center.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {!canPickCallCenter && clientId && !clientBoundCenterId && (
+                <div className="cf-field">
+                  <span className="cf-label">
+                    <Headset className="dbu-label-icon" />
+                    Call center
+                  </span>
+                  <p className="dbu-field-hint">
+                    This client has no call center yet. A Senior Supervisor must assign one before you can import.
+                  </p>
+                </div>
+              )}
 
               <div className="cf-field">
                 <span className="cf-label">
@@ -640,6 +769,13 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
                   <Coins className="dbu-batch-chip-icon" />
                   {selectedCurrency?.code}
                 </span>
+                {(clientBoundCenterName || callCenters.find((c) => String(c.id) === String(callCenterId))?.name) && (
+                  <span className="dbu-batch-chip">
+                    <Headset className="dbu-batch-chip-icon" />
+                    {clientBoundCenterName
+                      || callCenters.find((c) => String(c.id) === String(callCenterId))?.name}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -666,6 +802,12 @@ function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
                   <AlertTriangle className="cf-upload-result-icon" />
                   <span><strong>{failedCount}</strong> skipped</span>
                 </div>
+                {result?.callCenterName && (
+                  <div className="cf-upload-result-stat">
+                    <Headset className="cf-upload-result-icon" />
+                    <span>Bound to <strong>{result.callCenterName}</strong></span>
+                  </div>
+                )}
               </div>
 
               {hasFailures && (

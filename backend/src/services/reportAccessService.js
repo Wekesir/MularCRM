@@ -88,14 +88,19 @@ function canReadReport(context, slug) {
   if (!context) return false;
   if (context.isSystemAdmin) return true;
 
-  const modulePerms = context.permissions?.reporting_analytics;
-  if (!modulePerms) return false;
-
-  // Legacy flat module permission (before per-report submodules)
-  if (modulePerms.read === true) return true;
-
   const key = slugToPermissionKey(slug);
-  return Boolean(modulePerms[key]?.read);
+  const modules = [
+    context.permissions?.reports,
+    context.permissions?.reporting_analytics,
+  ].filter(Boolean);
+
+  for (const modulePerms of modules) {
+    // Legacy flat module permission (before per-report submodules)
+    if (modulePerms.read === true) return true;
+    if (modulePerms[key]?.read) return true;
+  }
+
+  return false;
 }
 
 async function getReportPasswordHash(slug) {

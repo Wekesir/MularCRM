@@ -3,9 +3,8 @@ import { toast } from 'react-toastify';
 import { Printer, Search, X } from 'lucide-react';
 import LazyDataTable from '../../components/LazyDataTable';
 import LoadingButton from '../../components/LoadingButton';
-import { deleteAuditRecord, fetchAuditRecords } from '../../api/audit';
+import { fetchAuditRecords } from '../../api/audit';
 import { useSystemConfig } from '../../context/SystemConfigContext';
-import { useConfirm } from '../../context/ConfirmContext';
 
 const TABS = [
   { key: 'logins', label: 'Login Sessions', singular: 'login record' },
@@ -45,9 +44,6 @@ function statusBadge(status) {
   return `<span class="${cls}">${escapeHtml(status || 'unknown')}</span>`;
 }
 
-function deleteActionCell() {
-  return `<button type="button" class="btn-table btn-table-danger" data-action="delete">Delete</button>`;
-}
 
 const COLUMN_DEFS = {
   logins: [
@@ -88,7 +84,6 @@ const COLUMN_DEFS = {
         return formatDateTime(data);
       },
     },
-    { data: null, title: 'Actions', orderable: false, searchable: false, render: deleteActionCell },
   ],
   emails: [
     {
@@ -109,7 +104,6 @@ const COLUMN_DEFS = {
     { data: 'provider', title: 'Provider', render: (data) => escapeHtml(data || '—') },
     { data: 'status', title: 'Status', render: (data) => statusBadge(data) },
     { data: 'createdAt', title: 'Sent At', render: (data) => formatDateTime(data) },
-    { data: null, title: 'Actions', orderable: false, searchable: false, render: deleteActionCell },
   ],
   sms: [
     {
@@ -140,7 +134,6 @@ const COLUMN_DEFS = {
     { data: 'status', title: 'Status', render: (data) => statusBadge(data) },
     { data: 'segments', title: 'Segments', render: (data) => escapeHtml(data ?? 0) },
     { data: 'createdAt', title: 'Sent At', render: (data) => formatDateTime(data) },
-    { data: null, title: 'Actions', orderable: false, searchable: false, render: deleteActionCell },
   ],
   activities: [
     {
@@ -183,7 +176,6 @@ const COLUMN_DEFS = {
       },
     },
     { data: 'createdAt', title: 'When', render: (data) => formatDateTime(data) },
-    { data: null, title: 'Actions', orderable: false, searchable: false, render: deleteActionCell },
   ],
 };
 
@@ -242,7 +234,6 @@ function buildAppliedParams({ search, dateFrom, dateTo }) {
 
 function AuditLogs() {
   const { businessName } = useSystemConfig();
-  const { confirm } = useConfirm();
   const [activeTab, setActiveTab] = useState('logins');
   const [draft, setDraft] = useState({ search: '', dateFrom: '', dateTo: '' });
   const [applied, setApplied] = useState({ search: '', dateFrom: '', dateTo: '' });
@@ -275,27 +266,6 @@ function AuditLogs() {
     setDraft({ search: '', dateFrom: '', dateTo: '' });
     setApplied({ search: '', dateFrom: '', dateTo: '' });
     setRefreshKey((k) => k + 1);
-  };
-
-  const handleAction = async (action, row) => {
-    if (action !== 'delete' || !row?.id) return;
-    await confirm({
-      title: `Delete ${tab.singular}`,
-      message: 'Are you sure you want to delete this record?',
-      detail: 'This audit record will be permanently removed and cannot be recovered.',
-      confirmText: 'Delete Record',
-      confirmLoadingText: 'Deleting…',
-      onConfirm: async () => {
-        try {
-          await deleteAuditRecord(activeTab, row.id);
-          toast.success('Record deleted');
-          setRefreshKey((k) => k + 1);
-        } catch (error) {
-          toast.error(error.response?.data?.message || 'Failed to delete record');
-          throw error;
-        }
-      },
-    });
   };
 
   const handlePrint = async () => {
@@ -405,7 +375,6 @@ function AuditLogs() {
         extraParams={appliedParams}
         order={[]}
         dom="lrtip"
-        onAction={handleAction}
       />
     </div>
   );

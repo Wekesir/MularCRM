@@ -1,4 +1,5 @@
 const pool = require('../db/pool');
+const { resolveCallCenterScope } = require('../config/orgRoles');
 
 function toNumber(value) {
   const n = Number(value);
@@ -12,6 +13,16 @@ function toDate(value) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+function parseJson(value, fallback = null) {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
 function normalizeDebtor(row) {
@@ -61,6 +72,7 @@ function normalizeDebtor(row) {
     contactStatusName: row.contact_status_name || null,
     contactStatusCode: row.contact_status_code || null,
     lastContactedAt: row.last_contacted_at || null,
+    lastContactChannel: row.last_contact_channel || null,
     nextActionDate: toDate(row.next_action_date),
     // Lookups
     debtCategoryId: row.debt_category_id || null,
@@ -82,12 +94,14 @@ function normalizeDebtor(row) {
 const SELECT_WITH_CLIENT = `
   SELECT d.*,
          c.name AS client_name,
+         c.call_center_id AS client_call_center_id,
          dc.name AS debt_category_name,
          dt.name AS debt_type_name,
          cur.code AS currency_code,
          cur.symbol AS currency_symbol,
          df.file_name AS file_name,
          df.is_closed AS file_is_closed,
+         df.call_center_id AS file_call_center_id,
          cs.name AS contact_status_name,
          cs.code AS contact_status_code
   FROM debtors d
@@ -99,6 +113,53 @@ const SELECT_WITH_CLIENT = `
   LEFT JOIN contact_statuses cs ON cs.id = d.contact_status_id
 `;
 
+/**
+ * Center Supervisors only see debtors bound to their call center
+ * (file center preferred, else client center). Unbound rows are hidden.
+ */
+function applyDebtorCallCenterScope(clauses, params, user) {
+  if (!user) return;
+  const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'none') {
+    clauses.push('1=0');
+    return;
+  }
+  if (scope.mode === 'center') {
+    if (!scope.callCenterId) {
+      clauses.push('1=0');
+      return;
+    }
+    clauses.push('COALESCE(df.call_center_id, c.call_center_id) = ?');
+    params.push(scope.callCenterId);
+  }
+}
+
+function resolveDebtorCallCenterId(row) {
+  if (!row) return null;
+  if (row.file_call_center_id != null) return Number(row.file_call_center_id);
+  if (row.client_call_center_id != null) return Number(row.client_call_center_id);
+  return null;
+}
+
+async function assertCallerCanAccessDebtor(user, debtorRow) {
+  if (!user || user.isSystemAdmin) return;
+  const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'company') return;
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+  const centerId = resolveDebtorCallCenterId(debtorRow);
+  if (!centerId || Number(centerId) !== Number(scope.callCenterId)) {
+    const err = new Error('This debtor is not assigned to your call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+}
+
 // Build the WHERE clause + params shared by listDebtors / listAllDebtors /
 // getDebtorTotals. Assumes the query FROM includes `debtors d` plus LEFT JOINs
 // to clients (c) and debtor_files (df) — see SELECT_WITH_CLIENT and the
@@ -106,6 +167,8 @@ const SELECT_WITH_CLIENT = `
 function buildDebtorWhere(f = {}) {
   const params = [];
   const clauses = ['d.deleted_at IS NULL'];
+
+  applyDebtorCallCenterScope(clauses, params, f.user);
 
   if (f.fileId != null && f.fileId !== '') {
     clauses.push('d.file_id = ?');
@@ -264,9 +327,11 @@ async function listDebtorAgents(filters = {}) {
   return rows.map((r) => r.agent).filter(Boolean);
 }
 
-async function getDebtorById(id) {
+async function getDebtorById(id, { user = null } = {}) {
   const [rows] = await pool.query(`${SELECT_WITH_CLIENT} WHERE d.id = ? LIMIT 1`, [id]);
-  return rows[0] ? normalizeDebtor(rows[0]) : null;
+  if (!rows[0]) return null;
+  if (user) await assertCallerCanAccessDebtor(user, rows[0]);
+  return normalizeDebtor(rows[0]);
 }
 
 async function getDebtorByCfid(cfid) {
@@ -397,7 +462,10 @@ async function upsertDebtorByLoanId(data) {
   }
 
   const [existing] = await pool.query(
-    `SELECT id, total_paid FROM debtors
+    `SELECT id, name, phone, email, secondary_phone_number, loan_amount, total_paid,
+            outstanding_balance, overdue_days, bucket, waived_amount, installment_amount,
+            penalty, account_number, id_number, contract_number, physical_address
+       FROM debtors
       WHERE client_id = ? AND loan_id = ? AND deleted_at IS NULL
       ORDER BY created_at DESC, id DESC LIMIT 1`,
     [clientId, loanId]
@@ -405,11 +473,46 @@ async function upsertDebtorByLoanId(data) {
 
   if (!existing[0]) {
     const debtor = await createDebtor(data);
-    return { debtor, wasCreated: true, previousTotalPaid: 0 };
+    return { debtor, wasCreated: true, previousTotalPaid: 0, changedFields: [] };
   }
 
-  const debtorId = existing[0].id;
-  const previousTotalPaid = Number(existing[0].total_paid) || 0;
+  const prev = existing[0];
+  const debtorId = prev.id;
+  const previousTotalPaid = Number(prev.total_paid) || 0;
+
+  const nextValues = {
+    name: String(data.name || '').trim(),
+    phone: data.phone ? String(data.phone).trim() : null,
+    email: data.email ? String(data.email).trim() : null,
+    secondaryPhoneNumber: data.secondaryPhoneNumber ? String(data.secondaryPhoneNumber).trim() : null,
+    loanAmount: toNumber(data.loanAmount),
+    totalPaid: toNumber(data.totalPaid),
+    outstandingBalance: toNumber(data.outstandingBalance),
+    overdueDays: Number(data.overdueDays) || 0,
+    bucket: data.bucket ? String(data.bucket).trim() : null,
+    borrowDate: toDate(data.borrowDate),
+    principalAmount: data.principalAmount != null ? toNumber(data.principalAmount) : null,
+    accountNumber: data.accountNumber ? String(data.accountNumber).trim() : null,
+    idNumber: data.idNumber ? String(data.idNumber).trim() : null,
+    waivedAmount: data.waivedAmount != null ? toNumber(data.waivedAmount) : null,
+    contractNumber: data.contractNumber ? String(data.contractNumber).trim() : null,
+    installmentAmount: data.installmentAmount != null ? toNumber(data.installmentAmount) : null,
+    penalty: data.penalty != null ? toNumber(data.penalty) : null,
+    loanDueDate: toDate(data.loanDueDate),
+    lastPaidAmount: data.lastPaidAmount != null ? toNumber(data.lastPaidAmount) : null,
+    lastPaidDate: toDate(data.lastPaidDate),
+    loanCounter: data.loanCounter != null ? Number(data.loanCounter) || null : null,
+    physicalAddress: data.physicalAddress ? String(data.physicalAddress).trim() : null,
+    employerAndAddress: data.employerAndAddress ? String(data.employerAndAddress).trim() : null,
+    nextOfKinFullName: data.nextOfKinFullName ? String(data.nextOfKinFullName).trim() : null,
+    nextOfKinRelationship: data.nextOfKinRelationship ? String(data.nextOfKinRelationship).trim() : null,
+    nextOfKinPhoneNumber: data.nextOfKinPhoneNumber ? String(data.nextOfKinPhoneNumber).trim() : null,
+    nextOfKinEmail: data.nextOfKinEmail ? String(data.nextOfKinEmail).trim() : null,
+    guarantorFullName: data.guarantorFullName ? String(data.guarantorFullName).trim() : null,
+    guarantorPhones: data.guarantorPhones ? String(data.guarantorPhones).trim() : null,
+    guarantorEmail: data.guarantorEmail ? String(data.guarantorEmail).trim() : null,
+    guarantorAddress: data.guarantorAddress ? String(data.guarantorAddress).trim() : null,
+  };
 
   const updates = [
     'name = ?', 'phone = ?', 'email = ?', 'secondary_phone_number = ?',
@@ -425,44 +528,71 @@ async function upsertDebtorByLoanId(data) {
     'guarantor_address = ?',
   ];
   const values = [
-    String(data.name || '').trim(),
-    data.phone ? String(data.phone).trim() : null,
-    data.email ? String(data.email).trim() : null,
-    data.secondaryPhoneNumber ? String(data.secondaryPhoneNumber).trim() : null,
-    toNumber(data.loanAmount),
-    toNumber(data.totalPaid),
-    toNumber(data.outstandingBalance),
-    Number(data.overdueDays) || 0,
-    data.bucket ? String(data.bucket).trim() : null,
-    toDate(data.borrowDate),
-    data.principalAmount != null ? toNumber(data.principalAmount) : null,
-    data.accountNumber ? String(data.accountNumber).trim() : null,
-    data.idNumber ? String(data.idNumber).trim() : null,
-    data.waivedAmount != null ? toNumber(data.waivedAmount) : null,
-    data.contractNumber ? String(data.contractNumber).trim() : null,
-    data.installmentAmount != null ? toNumber(data.installmentAmount) : null,
-    data.penalty != null ? toNumber(data.penalty) : null,
-    toDate(data.loanDueDate),
-    data.lastPaidAmount != null ? toNumber(data.lastPaidAmount) : null,
-    toDate(data.lastPaidDate),
-    data.loanCounter != null ? Number(data.loanCounter) || null : null,
-    data.physicalAddress ? String(data.physicalAddress).trim() : null,
-    data.employerAndAddress ? String(data.employerAndAddress).trim() : null,
-    data.nextOfKinFullName ? String(data.nextOfKinFullName).trim() : null,
-    data.nextOfKinRelationship ? String(data.nextOfKinRelationship).trim() : null,
-    data.nextOfKinPhoneNumber ? String(data.nextOfKinPhoneNumber).trim() : null,
-    data.nextOfKinEmail ? String(data.nextOfKinEmail).trim() : null,
-    data.guarantorFullName ? String(data.guarantorFullName).trim() : null,
-    data.guarantorPhones ? String(data.guarantorPhones).trim() : null,
-    data.guarantorEmail ? String(data.guarantorEmail).trim() : null,
-    data.guarantorAddress ? String(data.guarantorAddress).trim() : null,
+    nextValues.name,
+    nextValues.phone,
+    nextValues.email,
+    nextValues.secondaryPhoneNumber,
+    nextValues.loanAmount,
+    nextValues.totalPaid,
+    nextValues.outstandingBalance,
+    nextValues.overdueDays,
+    nextValues.bucket,
+    nextValues.borrowDate,
+    nextValues.principalAmount,
+    nextValues.accountNumber,
+    nextValues.idNumber,
+    nextValues.waivedAmount,
+    nextValues.contractNumber,
+    nextValues.installmentAmount,
+    nextValues.penalty,
+    nextValues.loanDueDate,
+    nextValues.lastPaidAmount,
+    nextValues.lastPaidDate,
+    nextValues.loanCounter,
+    nextValues.physicalAddress,
+    nextValues.employerAndAddress,
+    nextValues.nextOfKinFullName,
+    nextValues.nextOfKinRelationship,
+    nextValues.nextOfKinPhoneNumber,
+    nextValues.nextOfKinEmail,
+    nextValues.guarantorFullName,
+    nextValues.guarantorPhones,
+    nextValues.guarantorEmail,
+    nextValues.guarantorAddress,
     debtorId,
   ];
 
   await pool.query(`UPDATE debtors SET ${updates.join(', ')} WHERE id = ?`, values);
 
+  const numEq = (a, b) => (Number(a) || 0) === (Number(b) || 0);
+  const strEq = (a, b) => String(a || '') === String(b || '');
+  const changedFields = [];
+  if (!strEq(prev.name, nextValues.name)) changedFields.push('name');
+  if (!strEq(prev.phone, nextValues.phone)) changedFields.push('phone');
+  if (!strEq(prev.email, nextValues.email)) changedFields.push('email');
+  if (!strEq(prev.secondary_phone_number, nextValues.secondaryPhoneNumber)) {
+    changedFields.push('secondaryPhone');
+  }
+  if (!numEq(prev.loan_amount, nextValues.loanAmount)) changedFields.push('loanAmount');
+  if (!numEq(prev.outstanding_balance, nextValues.outstandingBalance)) {
+    changedFields.push('outstandingBalance');
+  }
+  if (!numEq(prev.overdue_days, nextValues.overdueDays)) changedFields.push('overdueDays');
+  if (!strEq(prev.bucket, nextValues.bucket)) changedFields.push('bucket');
+  if (!numEq(prev.waived_amount, nextValues.waivedAmount)) changedFields.push('waivedAmount');
+  if (!numEq(prev.installment_amount, nextValues.installmentAmount)) {
+    changedFields.push('installmentAmount');
+  }
+  if (!numEq(prev.penalty, nextValues.penalty)) changedFields.push('penalty');
+  if (!strEq(prev.account_number, nextValues.accountNumber)) changedFields.push('accountNumber');
+  if (!strEq(prev.id_number, nextValues.idNumber)) changedFields.push('idNumber');
+  if (!strEq(prev.contract_number, nextValues.contractNumber)) changedFields.push('contractNumber');
+  if (!strEq(prev.physical_address, nextValues.physicalAddress)) {
+    changedFields.push('physicalAddress');
+  }
+
   const debtor = await getDebtorById(debtorId);
-  return { debtor, wasCreated: false, previousTotalPaid };
+  return { debtor, wasCreated: false, previousTotalPaid, changedFields };
 }
 
 // ── debtor_files (bulk-upload batches) ──
@@ -476,11 +606,15 @@ async function createDebtorFile({
   uploadedBy = null,
   batchDate = null,
   source = null,
+  callCenterId = null,
+  callCenterAssignedBy = null,
 } = {}) {
+  const centerId = callCenterId != null ? Number(callCenterId) || null : null;
   const [result] = await pool.query(
     `INSERT INTO debtor_files
-      (client_id, file_name, debt_category_id, debt_type_id, currency_id, uploaded_by, batch_date, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (client_id, file_name, debt_category_id, debt_type_id, currency_id, uploaded_by,
+       batch_date, source, call_center_id, call_center_assigned_at, call_center_assigned_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${centerId ? 'NOW()' : 'NULL'}, ?)`,
     [
       clientId != null ? Number(clientId) || null : null,
       fileName ? String(fileName).slice(0, 255) : null,
@@ -490,9 +624,11 @@ async function createDebtorFile({
       uploadedBy != null ? Number(uploadedBy) || null : null,
       batchDate || null,
       source ? String(source).slice(0, 32) : null,
+      centerId,
+      centerId && callCenterAssignedBy != null ? Number(callCenterAssignedBy) || null : null,
     ]
   );
-  return { id: result.insertId };
+  return { id: result.insertId, callCenterId: centerId };
 }
 
 async function updateDebtorFileStats(id, { rowCount, importedCount, skippedCount }) {
@@ -632,24 +768,75 @@ async function resolveBatchFileName({
   return name.slice(0, 255);
 }
 
+async function assertCallerCanAccessDebtorFile(user, fileRow) {
+  if (!user || user.isSystemAdmin) return;
+  const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'company') return;
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+  const fileCenter =
+    fileRow?.call_center_id != null
+      ? Number(fileRow.call_center_id)
+      : fileRow?.client_call_center_id != null
+        ? Number(fileRow.client_call_center_id)
+        : null;
+  if (!fileCenter || Number(fileCenter) !== Number(scope.callCenterId)) {
+    const err = new Error('This portfolio is not assigned to your call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+}
+
 // Soft-delete a batch file and every debtor that belongs to it. Both the
 // debtor_files row and the matching debtors get deleted_at stamped, so they
 // disappear from listings without losing data.
-async function softDeleteDebtorFile(id) {
+async function softDeleteDebtorFile(id, { user = null } = {}) {
   const fileId = Number(id);
-  if (!Number.isFinite(fileId)) return { deleted: false };
+  if (!Number.isFinite(fileId)) return { deleted: false, debtors: [] };
   const [[existing]] = await pool.query(
-    'SELECT id FROM debtor_files WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+    `SELECT df.id, df.call_center_id, c.call_center_id AS client_call_center_id
+     FROM debtor_files df
+     LEFT JOIN clients c ON c.id = df.client_id
+     WHERE df.id = ? AND df.deleted_at IS NULL
+     LIMIT 1`,
     [fileId]
   );
-  if (!existing) return { deleted: false };
+  if (!existing) return { deleted: false, debtors: [] };
+  if (user) await assertCallerCanAccessDebtorFile(user, existing);
 
+  const [debtors] = await pool.query(
+    'SELECT id, name FROM debtors WHERE file_id = ? AND deleted_at IS NULL',
+    [fileId]
+  );
   await pool.query('UPDATE debtors SET deleted_at = NOW() WHERE file_id = ? AND deleted_at IS NULL', [fileId]);
   await pool.query('UPDATE debtor_files SET deleted_at = NOW() WHERE id = ?', [fileId]);
-  return { deleted: true, fileId };
+  return {
+    deleted: true,
+    fileId,
+    debtors: debtors.map((row) => ({ id: row.id, name: row.name || null })),
+  };
 }
 
-async function listDebtorFiles() {
+async function listDebtorFiles({ user = null } = {}) {
+  const where = ['df.deleted_at IS NULL'];
+  const params = [];
+  if (user) {
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'none') return [];
+    if (scope.mode === 'center') {
+      if (!scope.callCenterId) return [];
+      where.push(
+        '(df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))'
+      );
+      params.push(scope.callCenterId, scope.callCenterId);
+    }
+  }
+
   const [rows] = await pool.query(
     `SELECT df.*,
             c.name AS client_name,
@@ -674,13 +861,15 @@ async function listDebtorFiles() {
               COALESCE(SUM(outstanding_balance), 0) AS outstanding_total
        FROM debtors WHERE deleted_at IS NULL GROUP BY file_id
      ) agg ON agg.file_id = df.id
-     WHERE df.deleted_at IS NULL
-     ORDER BY df.created_at DESC, df.id DESC`
+     WHERE ${where.join(' AND ')}
+     ORDER BY df.created_at DESC, df.id DESC`,
+    params
   );
   return rows.map((row) => ({
     id: row.id,
     clientId: row.client_id || null,
     clientName: row.client_name || null,
+    callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
     fileName: row.file_name || null,
     debtCategoryId: row.debt_category_id || null,
     debtCategoryName: row.debt_category_name || null,
@@ -721,8 +910,8 @@ async function getDebtorTotals(filters = {}) {
 }
 
 // Activity history for a debtor — events recorded against entityType='debtor'.
-async function getDebtorHistory(id) {
-  const debtor = await getDebtorById(id);
+async function getDebtorHistory(id, { user = null } = {}) {
+  const debtor = await getDebtorById(id, { user });
   if (!debtor) return null;
 
   const [rows] = await pool.query(
@@ -737,11 +926,15 @@ async function getDebtorHistory(id) {
 
   const history = rows.map((row) => ({
     id: row.id,
+    userId: row.user_id || null,
     userName: row.user_name || null,
     actionType: row.action_type,
     title: row.title,
     subject: row.subject || null,
     amount: row.amount !== null ? Number(row.amount) : null,
+    entityType: row.entity_type || null,
+    entityId: row.entity_id || null,
+    metadata: parseJson(row.metadata, null),
     createdAt: row.created_at,
   }));
 
@@ -798,4 +991,5 @@ module.exports = {
   listDebtorFiles,
   closeDebtorCase,
   reopenDebtorCase,
+  assertCallerCanAccessDebtor,
 };

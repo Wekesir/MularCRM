@@ -78,7 +78,7 @@ const ACTIVITY_SELECT = `
 /* Recording (system-internal, fail-safe)                                     */
 /* -------------------------------------------------------------------------- */
 
-async function recordActivityEvent({
+function normalizeActivityInsertRow({
   userId = null,
   userName = null,
   actionType,
@@ -89,28 +89,60 @@ async function recordActivityEvent({
   amount = null,
   metadata = null,
 }) {
+  if (!actionType || !title) return null;
+  return [
+    userId ?? null,
+    userName ?? null,
+    String(actionType).slice(0, 80),
+    String(title).slice(0, 255),
+    subject ? String(subject).slice(0, 512) : null,
+    entityType ? String(entityType).slice(0, 50) : null,
+    entityId != null ? String(entityId).slice(0, 120) : null,
+    amount != null && Number.isFinite(Number(amount)) ? Number(amount) : null,
+    metadata ? JSON.stringify(metadata) : null,
+  ];
+}
+
+async function recordActivityEvent(event) {
   try {
-    if (!actionType || !title) return null;
+    const row = normalizeActivityInsertRow(event || {});
+    if (!row) return null;
     const [result] = await pool.query(
       `INSERT INTO activity_log
         (user_id, user_name, action_type, title, subject, entity_type, entity_id, amount, metadata)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        userId ?? null,
-        userName ?? null,
-        String(actionType).slice(0, 80),
-        String(title).slice(0, 255),
-        subject ? String(subject).slice(0, 512) : null,
-        entityType ? String(entityType).slice(0, 50) : null,
-        entityId != null ? String(entityId).slice(0, 120) : null,
-        amount != null && Number.isFinite(Number(amount)) ? Number(amount) : null,
-        metadata ? JSON.stringify(metadata) : null,
-      ]
+      row
     );
     return result.insertId;
   } catch (error) {
     console.warn('[activityService] Failed to record activity event:', error.message);
     return null;
+  }
+}
+
+/** Bulk-insert activity rows. Returns the number of rows inserted. */
+async function recordActivityEvents(events = []) {
+  const rows = (Array.isArray(events) ? events : [])
+    .map((evt) => normalizeActivityInsertRow(evt || {}))
+    .filter(Boolean);
+  if (rows.length === 0) return 0;
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO activity_log
+        (user_id, user_name, action_type, title, subject, entity_type, entity_id, amount, metadata)
+       VALUES ?`,
+      [rows]
+    );
+    return result.affectedRows || 0;
+  } catch (error) {
+    console.warn('[activityService] Failed to record activity events:', error.message);
+    // Fall back to one-by-one so a single bad row does not drop the rest.
+    let inserted = 0;
+    for (const evt of events) {
+      const id = await recordActivityEvent(evt);
+      if (id) inserted += 1;
+    }
+    return inserted;
   }
 }
 
@@ -176,23 +208,6 @@ async function getActivityLogById(id) {
   return rows.length ? normalizeActivity(rows[0]) : null;
 }
 
-async function deleteActivityLog(id) {
-  const [result] = await pool.query('DELETE FROM activity_log WHERE id = ?', [id]);
-  return result.affectedRows > 0;
-}
-
-async function clearActivityLogs({ olderThanDays } = {}) {
-  if (olderThanDays) {
-    const [result] = await pool.query(
-      'DELETE FROM activity_log WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
-      [Number(olderThanDays)]
-    );
-    return result.affectedRows;
-  }
-  const [result] = await pool.query('DELETE FROM activity_log');
-  return result.affectedRows;
-}
-
 async function getActivityStats() {
   const [[totals]] = await pool.query(
     `SELECT
@@ -218,9 +233,8 @@ async function getActivityStats() {
 
 module.exports = {
   recordActivityEvent,
+  recordActivityEvents,
   listActivityLogs,
   getActivityLogById,
-  deleteActivityLog,
-  clearActivityLogs,
   getActivityStats,
 };
