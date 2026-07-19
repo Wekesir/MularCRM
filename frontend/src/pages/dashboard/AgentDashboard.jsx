@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
   Briefcase,
   CalendarCheck2,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Coins,
   Mail,
@@ -114,6 +116,70 @@ function HeroStat({ label, value, prefix = '', suffix = '', decimals = 0 }) {
   );
 }
 
+/** Horizontal portfolio breakdown card with segmented bar */
+function PortfolioBreakdown({ summary, charts }) {
+  const open = Number(charts?.caseStatus?.values?.[0]) || 0;
+  const ptp = Number(charts?.caseStatus?.values?.[1]) || 0;
+  const closed = Number(charts?.caseStatus?.values?.[2]) || 0;
+  const total = open + ptp + closed;
+  const pct = (n) => (total > 0 ? (n / total) * 100 : 0);
+  const recoveryRate = Number(summary?.recoveryRate) || 0;
+
+  return (
+    <div className="adash-portfolio-card">
+      <div className="adash-portfolio-card-left">
+        <p className="adash-portfolio-card-label">Portfolio</p>
+        <p className="adash-portfolio-card-total">{total.toLocaleString()}</p>
+        <p className="adash-portfolio-card-sublabel">
+          {summary?.activeFiles || 0} file{(summary?.activeFiles || 0) !== 1 ? 's' : ''}
+        </p>
+      </div>
+      <div className="adash-portfolio-card-right">
+        <div
+          className="adash-portfolio-bar-track"
+          role="img"
+          aria-label={`Portfolio: ${open} open, ${ptp} PTP, ${closed} closed`}
+        >
+          {total > 0 ? (
+            <>
+              <div className="adash-portfolio-bar-fill adash-portfolio-bar-fill--open" style={{ width: `${pct(open)}%` }} />
+              <div className="adash-portfolio-bar-fill adash-portfolio-bar-fill--ptp" style={{ width: `${pct(ptp)}%` }} />
+              <div className="adash-portfolio-bar-fill adash-portfolio-bar-fill--closed" style={{ width: `${pct(closed)}%` }} />
+            </>
+          ) : (
+            <div className="adash-portfolio-bar-fill adash-portfolio-bar-fill--empty" style={{ width: '100%' }} />
+          )}
+        </div>
+        <div className="adash-portfolio-legend">
+          <span className="adash-portfolio-legend-item">
+            <span className="adash-portfolio-legend-dot adash-portfolio-legend-dot--open" />
+            <span className="adash-portfolio-legend-value">{open}</span>
+            <span className="adash-portfolio-legend-label">Open</span>
+          </span>
+          <span className="adash-portfolio-legend-item">
+            <span className="adash-portfolio-legend-dot adash-portfolio-legend-dot--ptp" />
+            <span className="adash-portfolio-legend-value">{ptp}</span>
+            <span className="adash-portfolio-legend-label">PTP</span>
+          </span>
+          <span className="adash-portfolio-legend-item">
+            <span className="adash-portfolio-legend-dot adash-portfolio-legend-dot--closed" />
+            <span className="adash-portfolio-legend-value">{closed}</span>
+            <span className="adash-portfolio-legend-label">Closed</span>
+          </span>
+          {recoveryRate > 0 && (
+            <span className="adash-portfolio-legend-item adash-portfolio-legend-item--rate">
+              <span className="adash-portfolio-legend-label">Recovery</span>
+              <span className="adash-portfolio-legend-value adash-portfolio-legend-value--rate">
+                {recoveryRate}%
+              </span>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Pulsing skeleton shown while data is loading */
 function DashSkeleton() {
   return (
@@ -201,6 +267,27 @@ function AgentDashboard() {
 
   const firstName = agentName ? agentName.trim().split(' ')[0] : '';
   const periodLabel = PERIODS.find((p) => p.value === period)?.label || 'Today';
+
+  const kpiScrollRef = useRef(null);
+  const [kpiCanScrollRight, setKpiCanScrollRight] = useState(false);
+  const [kpiCanScrollLeft, setKpiCanScrollLeft] = useState(false);
+
+  useEffect(() => {
+    const el = kpiScrollRef.current;
+    if (!el) return;
+    const check = () => {
+      setKpiCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+      setKpiCanScrollLeft(el.scrollLeft > 4);
+    };
+    check();
+    el.addEventListener('scroll', check, { passive: true });
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', check); ro.disconnect(); };
+  }, [kpiItems]);
+
+  const scrollKpiRight = () => kpiScrollRef.current?.scrollBy({ left: 280, behavior: 'smooth' });
+  const scrollKpiLeft  = () => kpiScrollRef.current?.scrollBy({ left: -280, behavior: 'smooth' });
 
   const contactsMade = useMemo(
     () =>
@@ -349,6 +436,31 @@ function AgentDashboard() {
             <p className="adash-hero-date">
               Your {periodLabel.toLowerCase()} performance at a glance
             </p>
+            {(data?.agent?.expertise || data?.agent?.experience) && (
+              <div className="adash-hero-tags">
+                {data.agent.experience ? (
+                  <span className="adash-hero-tag">
+                    <TrendingUp className="icon-xs" aria-hidden="true" />
+                    {data.agent.experience}
+                  </span>
+                ) : null}
+                {data.agent.expertise
+                  ? String(data.agent.expertise)
+                      .split(/[,;|]/)
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                      .slice(0, 3)
+                      .map((tag) => (
+                        <span key={tag} className="adash-hero-tag">{tag}</span>
+                      ))
+                  : null}
+                {data.agent.workload != null && Number(data.agent.workload) > 0 && (
+                  <span className="adash-hero-tag adash-hero-tag--workload">
+                    {Number(data.agent.workload)}% workload
+                  </span>
+                )}
+              </div>
+            )}
             <div className="adash-hero-actions">
               <Link to="/case-management/my-portfolio" className="adash-hero-cta">
                 <Briefcase className="icon-sm" aria-hidden="true" />
@@ -376,6 +488,9 @@ function AgentDashboard() {
           </div>
         </div>
       </div>
+
+      {/* ── Portfolio Overview ───────────────────────────── */}
+      <PortfolioBreakdown summary={summary} charts={charts} />
 
       {/* ── Portfolio Stats ──────────────────────────────── */}
       <section className="adash-stats-grid" aria-label="Portfolio financials">
@@ -427,7 +542,7 @@ function AgentDashboard() {
       <section aria-label="Contact activity">
         <SectionHeader icon={Phone} title="Contact Activity" count={contactsMade} />
         <div className="adash-activity-strip" role="group" aria-label={`${periodLabel} contact summary`}>
-          <div className="adash-activity-pill adash-activity-pill--calls">
+          <div className="adash-activity-pill adash-activity-pill--calls" style={{ '--pill-index': 0 }}>
             <span className="adash-activity-pill-icon" aria-hidden="true">
               <Phone className="icon-sm" />
             </span>
@@ -438,7 +553,7 @@ function AgentDashboard() {
               <span className="adash-activity-pill-label">Calls</span>
             </div>
           </div>
-          <div className="adash-activity-pill adash-activity-pill--sms">
+          <div className="adash-activity-pill adash-activity-pill--sms" style={{ '--pill-index': 1 }}>
             <span className="adash-activity-pill-icon" aria-hidden="true">
               <MessageSquare className="icon-sm" />
             </span>
@@ -449,7 +564,7 @@ function AgentDashboard() {
               <span className="adash-activity-pill-label">SMS</span>
             </div>
           </div>
-          <div className="adash-activity-pill adash-activity-pill--email">
+          <div className="adash-activity-pill adash-activity-pill--email" style={{ '--pill-index': 2 }}>
             <span className="adash-activity-pill-icon" aria-hidden="true">
               <Mail className="icon-sm" />
             </span>
@@ -460,7 +575,7 @@ function AgentDashboard() {
               <span className="adash-activity-pill-label">Email</span>
             </div>
           </div>
-          <div className="adash-activity-pill adash-activity-pill--whatsapp">
+          <div className="adash-activity-pill adash-activity-pill--whatsapp" style={{ '--pill-index': 3 }}>
             <span className="adash-activity-pill-icon" aria-hidden="true">
               <MessageSquare className="icon-sm" />
             </span>
@@ -478,52 +593,94 @@ function AgentDashboard() {
       {kpiItems.length > 0 && (
         <section className="agent-kpi-section">
           <SectionHeader icon={Target} title="KPI Progress" count={kpiItems.length} />
-          <div className="adash-kpi-grid">
-            {kpiItems.map((item, index) => {
-              const meta = KPI_META[item.key] || { color: 'var(--theme-color)', icon: Target };
-              const IconComp = meta.icon;
-              const isComplete = (item.progress || 0) >= 100;
-              return (
-                <article
-                  key={item.key}
-                  className={`adash-kpi-card dashboard-stat-card${isComplete ? ' is-complete' : ''}`}
-                  style={{ '--card-index': 4 + index, '--kpi-color': meta.color }}
-                >
-                  <div className="adash-kpi-ring-wrap">
-                    <KpiRing
-                      progress={item.progress}
-                      color={isComplete ? '#16a34a' : meta.color}
-                      size={76}
-                    />
-                    <div className="adash-kpi-ring-center" aria-hidden="true">
-                      <span className="adash-kpi-ring-pct">
-                        {Math.round(item.progress || 0)}
-                        <span className="adash-kpi-ring-pct-sym">%</span>
-                      </span>
+          <div className="adash-kpi-scroll-wrap">
+            <div className="adash-kpi-grid" ref={kpiScrollRef}>
+              {kpiItems.map((item, index) => {
+                const meta = KPI_META[item.key] || { color: 'var(--theme-color)', icon: Target };
+                const IconComp = meta.icon;
+                const isComplete = (item.progress || 0) >= 100;
+                return (
+                  <article
+                    key={item.key}
+                    className={`adash-kpi-card dashboard-stat-card${isComplete ? ' is-complete' : ''}`}
+                    style={{ '--card-index': 4 + index, '--kpi-color': meta.color }}
+                  >
+                    <div className="adash-kpi-ring-wrap">
+                      <KpiRing
+                        progress={item.progress}
+                        color={isComplete ? '#16a34a' : meta.color}
+                        size={90}
+                      />
+                      <div className="adash-kpi-ring-center" aria-hidden="true">
+                        <span className="adash-kpi-ring-pct">
+                          {Math.round(item.progress || 0)}
+                          <span className="adash-kpi-ring-pct-sym">%</span>
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="adash-kpi-card-body">
-                    <div className="adash-kpi-card-label-row">
-                      <span className="adash-kpi-icon-wrap" aria-hidden="true">
-                        <IconComp className="icon-sm" />
-                      </span>
-                      <span className="adash-kpi-name">{item.label}</span>
+                    <div className="adash-kpi-card-body">
+                      <div className="adash-kpi-card-label-row">
+                        <span className="adash-kpi-icon-wrap" aria-hidden="true">
+                          <IconComp className="icon-sm" />
+                        </span>
+                        <span className="adash-kpi-name">{item.label}</span>
+                      </div>
+                      <p className="adash-kpi-actual">
+                        {item.kind === 'money'
+                          ? formatMoney(item.actual, currencySymbol)
+                          : Number(item.actual || 0).toLocaleString()}
+                      </p>
+                      <p className="adash-kpi-target">
+                        Target:{' '}
+                        {item.kind === 'money'
+                          ? formatMoney(item.target, currencySymbol)
+                          : Number(item.target || 0).toLocaleString()}
+                      </p>
                     </div>
-                    <p className="adash-kpi-actual">
-                      {item.kind === 'money'
-                        ? formatMoney(item.actual, currencySymbol)
-                        : Number(item.actual || 0).toLocaleString()}
-                    </p>
-                    <p className="adash-kpi-target">
-                      Target:{' '}
-                      {item.kind === 'money'
-                        ? formatMoney(item.target, currencySymbol)
-                        : Number(item.target || 0).toLocaleString()}
-                    </p>
-                  </div>
-                </article>
-              );
-            })}
+                    <div
+                      className="adash-kpi-linear-bar"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(item.progress || 0)}
+                      aria-label={`${item.label} ${Math.round(item.progress || 0)}% of target`}
+                    >
+                      <div
+                        className="adash-kpi-linear-fill"
+                        style={{
+                          width: `${Math.min(100, item.progress || 0)}%`,
+                          background: isComplete ? '#16a34a' : meta.color,
+                        }}
+                      />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {/* Left fade + scroll-left button */}
+            <div className={`adash-kpi-scroll-edge adash-kpi-scroll-edge--left${kpiCanScrollLeft ? ' is-visible' : ''}`} aria-hidden="true" />
+            {kpiCanScrollLeft && (
+              <button
+                type="button"
+                className="adash-kpi-scroll-hint adash-kpi-scroll-hint--left"
+                onClick={scrollKpiLeft}
+                aria-label="Scroll left"
+              >
+                <ChevronLeft className="icon-sm adash-kpi-scroll-hint-icon adash-kpi-scroll-hint-icon--left" />
+              </button>
+            )}
+            {/* Right fade + scroll-right button */}
+            <div className={`adash-kpi-scroll-edge${kpiCanScrollRight ? ' is-visible' : ''}`} aria-hidden="true" />
+            {kpiCanScrollRight && (
+              <button
+                type="button"
+                className="adash-kpi-scroll-hint"
+                onClick={scrollKpiRight}
+                aria-label="Scroll right to see more KPIs"
+              >
+                <ChevronRight className="icon-sm adash-kpi-scroll-hint-icon" />
+              </button>
+            )}
           </div>
         </section>
       )}

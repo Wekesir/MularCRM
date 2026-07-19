@@ -260,6 +260,28 @@ async function initAccessControlTables() {
     'Senior Supervisor',
   ]);
 
+  // Keep Agent role family in sync (curated self-scoped reports).
+  const agentPermsJson = JSON.stringify(buildAgentDefaultPermissions());
+  for (const agentRoleName of ['Agent', 'Internal Agent', 'External Agent']) {
+    await pool.query('UPDATE roles SET permissions = ? WHERE name = ?', [
+      agentPermsJson,
+      agentRoleName,
+    ]);
+  }
+
+  // Keep Supervisor role family in sync (full center-scoped report suite).
+  const supervisorPermsJson = JSON.stringify(buildSupervisorPermissions());
+  for (const supervisorRoleName of [
+    'Supervisor',
+    'Call Centre Supervisor',
+    'External Agent Supervisor',
+  ]) {
+    await pool.query('UPDATE roles SET permissions = ? WHERE name = ?', [
+      supervisorPermsJson,
+      supervisorRoleName,
+    ]);
+  }
+
   // Migrate legacy Manager → Supervisor (idempotent).
   const [managerRole] = await pool.query(
     `SELECT id FROM roles WHERE name = 'Manager' LIMIT 1`
@@ -1491,6 +1513,54 @@ async function initDebtConfigTables() {
       CONSTRAINT fk_ptp_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE CASCADE,
       CONSTRAINT fk_ptp_agent FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
       CONSTRAINT fk_ptp_attempt FOREIGN KEY (contact_attempt_id) REFERENCES contact_attempts(id) ON DELETE SET NULL
+    )
+  `);
+
+  // ── loan_restructures ── agent-proposed repayment plans pending supervisor approval
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS loan_restructures (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      debtor_id INT NOT NULL,
+      agent_id INT NOT NULL,
+      contact_attempt_id INT NULL,
+      installment_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+      installment_count INT NOT NULL,
+      first_due_date DATE NOT NULL,
+      frequency ENUM('monthly') NOT NULL DEFAULT 'monthly',
+      total_plan_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+      previous_installment_amount DECIMAL(18,2) NULL,
+      previous_loan_due_date DATE NULL,
+      status ENUM('pending_approval','approved','rejected','cancelled','completed') NOT NULL DEFAULT 'pending_approval',
+      reviewed_by INT NULL,
+      reviewed_at TIMESTAMP NULL,
+      rejection_reason TEXT NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_restructure_status (status),
+      INDEX idx_restructure_agent (agent_id),
+      INDEX idx_restructure_debtor (debtor_id),
+      CONSTRAINT fk_restructure_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE CASCADE,
+      CONSTRAINT fk_restructure_agent FOREIGN KEY (agent_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_restructure_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_restructure_attempt FOREIGN KEY (contact_attempt_id) REFERENCES contact_attempts(id) ON DELETE SET NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS loan_restructure_installments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      restructure_id INT NOT NULL,
+      sequence INT NOT NULL,
+      amount DECIMAL(18,2) NOT NULL DEFAULT 0.00,
+      due_date DATE NOT NULL,
+      status ENUM('pending','paid','cancelled') NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_restructure_sequence (restructure_id, sequence),
+      INDEX idx_restructure_inst_due (due_date),
+      INDEX idx_restructure_inst_status (status),
+      CONSTRAINT fk_restructure_inst_parent FOREIGN KEY (restructure_id) REFERENCES loan_restructures(id) ON DELETE CASCADE
     )
   `);
 

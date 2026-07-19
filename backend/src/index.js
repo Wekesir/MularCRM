@@ -62,6 +62,7 @@ app.use('/api/template-variables', require('./routes/templateVariables'));
 app.use('/api/templates', require('./routes/templates'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/ptp', require('./routes/ptp'));
+app.use('/api/loan-restructures', require('./routes/loanRestructures'));
 app.use('/api/commissions', require('./routes/commissions'));
 app.use('/api/client-commission-rates', require('./routes/clientCommissionRates'));
 app.use('/api/backup', require('./routes/backup'));

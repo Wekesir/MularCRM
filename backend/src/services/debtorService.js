@@ -1,5 +1,5 @@
 const pool = require('../db/pool');
-const { resolveCallCenterScope } = require('../config/orgRoles');
+const { resolveCallCenterScope, isAgentRole } = require('../config/orgRoles');
 
 function toNumber(value) {
   const n = Number(value);
@@ -114,11 +114,23 @@ const SELECT_WITH_CLIENT = `
 `;
 
 /**
- * Center Supervisors only see debtors bound to their call center
- * (file center preferred, else client center). Unbound rows are hidden.
+ * Scope debtor lists:
+ * - Agents → only cases assigned to them (by collector name)
+ * - Center Supervisors → file/client call center bind
+ * - Unbound / other centers hidden for supervisors
  */
 function applyDebtorCallCenterScope(clauses, params, user) {
   if (!user) return;
+  if (isAgentRole(user) && !user.isSystemAdmin) {
+    const name = String(user.name || '').trim();
+    if (!name) {
+      clauses.push('1=0');
+      return;
+    }
+    clauses.push(`${'d'}.assigned_agent = ?`);
+    params.push(name);
+    return;
+  }
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'none') {
     clauses.push('1=0');
@@ -143,6 +155,16 @@ function resolveDebtorCallCenterId(row) {
 
 async function assertCallerCanAccessDebtor(user, debtorRow) {
   if (!user || user.isSystemAdmin) return;
+  if (isAgentRole(user)) {
+    const name = String(user.name || '').trim();
+    if (!name || String(debtorRow?.assigned_agent || '') !== name) {
+      const err = new Error('This debtor is not in your portfolio');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'company') return;
   if (scope.mode !== 'center' || !scope.callCenterId) {
@@ -826,14 +848,28 @@ async function listDebtorFiles({ user = null } = {}) {
   const where = ['df.deleted_at IS NULL'];
   const params = [];
   if (user) {
-    const scope = resolveCallCenterScope(user);
-    if (scope.mode === 'none') return [];
-    if (scope.mode === 'center') {
-      if (!scope.callCenterId) return [];
-      where.push(
-        '(df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))'
-      );
-      params.push(scope.callCenterId, scope.callCenterId);
+    if (isAgentRole(user) && !user.isSystemAdmin) {
+      const name = String(user.name || '').trim();
+      if (!name) return [];
+      // Only files that still have at least one of this agent's open cases.
+      where.push(`EXISTS (
+        SELECT 1 FROM debtors d
+        WHERE d.file_id = df.id
+          AND d.deleted_at IS NULL
+          AND d.is_closed = 0
+          AND d.assigned_agent = ?
+      )`);
+      params.push(name);
+    } else {
+      const scope = resolveCallCenterScope(user);
+      if (scope.mode === 'none') return [];
+      if (scope.mode === 'center') {
+        if (!scope.callCenterId) return [];
+        where.push(
+          '(df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))'
+        );
+        params.push(scope.callCenterId, scope.callCenterId);
+      }
     }
   }
 

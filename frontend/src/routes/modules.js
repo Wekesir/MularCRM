@@ -30,6 +30,7 @@ import ContactUploadPage from '../pages/ContactUploadPage';
 import PaymentsPage from '../pages/payments/PaymentsPage';
 import CommissionsPage from '../pages/payments/CommissionsPage';
 import PtpPage from '../pages/payments/PtpPage';
+import RestructuredLoansPage from '../pages/payments/RestructuredLoansPage';
 import NonConfirmedPaymentsPage from '../pages/payments/NonConfirmedPaymentsPage';
 
 // Reports
@@ -100,6 +101,7 @@ export const modules = [
   { path: '/payments/payments', label: 'Payments', component: PaymentsPage },
   { path: '/payments/commissions', label: 'Commissions', component: CommissionsPage },
   { path: '/payments/ptp', label: 'PTP (Promise to Pay)', component: PtpPage },
+  { path: '/payments/restructured-loans', label: 'Restructured Loans', component: RestructuredLoansPage },
   { path: '/payments/non-confirmed-payments', label: 'Non-confirmed Payments', component: NonConfirmedPaymentsPage },
 
   { path: '/reports/debtor-summary', label: 'Debtor Summary', component: DebtorSummaryPage },

@@ -292,10 +292,25 @@ async function updatePtpArrangement(id, payload = {}, viewer = null) {
   return getPtpById(id);
 }
 
+/**
+ * Cancel all pending PTPs for a debtor (e.g. when a restructure is approved).
+ * @returns {Promise<number>} number of rows updated
+ */
+async function cancelPendingPtpsForDebtor(debtorId) {
+  const [result] = await pool.query(
+    `UPDATE ptp_arrangements
+     SET status = 'cancelled'
+     WHERE debtor_id = ? AND status = 'pending'`,
+    [Number(debtorId)]
+  );
+  return Number(result.affectedRows) || 0;
+}
+
 module.exports = {
   createPtpArrangement,
   getPtpById,
   listPtpArrangements,
   getPtpTotals,
   updatePtpArrangement,
+  cancelPendingPtpsForDebtor,
 };

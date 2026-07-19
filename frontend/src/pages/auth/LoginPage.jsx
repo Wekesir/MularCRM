@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Fingerprint, Mail, Shield } from 'lucide-react';
+import { ArrowRight, Fingerprint, Mail, Shield, UserRound } from 'lucide-react';
 import { toast } from 'react-toastify';
 import AuthFormField from '../../components/auth/AuthFormField';
 import LoadingButton from '../../components/LoadingButton';
@@ -94,6 +94,14 @@ function LoginPage() {
   return (
     <div className="auth-panel auth-panel-modern">
       <div className="auth-panel-header">
+        {/* Human avatar */}
+        <div className="auth-avatar" aria-hidden="true">
+          <div className="auth-avatar-ring" />
+          <div className="auth-avatar-inner">
+            <UserRound className="auth-avatar-icon" strokeWidth={1.5} />
+          </div>
+        </div>
+
         <span className="auth-panel-badge">
           <Shield className="auth-panel-badge-icon" aria-hidden="true" />
           Secure sign-in
@@ -161,12 +169,6 @@ function LoginPage() {
             <Fingerprint className="icon-sm" aria-hidden="true" />
             Sign in with fingerprint
           </LoadingButton>
-          <p className="auth-passkey-hint">
-            Enter your email, then click Sign in with fingerprint. If Chrome asks for a Google PIN,
-            the passkey is still in Google Password Manager — remove it under Chrome → Password
-            Manager → Passkeys for localhost, then re-register under Profile → Device Unlock and
-            choose this device. On Linux, Chrome often cannot use the laptop fingerprint sensor.
-          </p>
         </>
       ) : null}
     </div>

@@ -162,6 +162,24 @@ function buildPortfolioFilters(agentName, filters = {}) {
     params.push(Number(filters.overdueDaysMax));
   }
 
+  if (filters.balanceMin != null && filters.balanceMin !== '') {
+    clauses.push('d.outstanding_balance >= ?');
+    params.push(Number(filters.balanceMin));
+  }
+  if (filters.balanceMax != null && filters.balanceMax !== '') {
+    clauses.push('d.outstanding_balance <= ?');
+    params.push(Number(filters.balanceMax));
+  }
+
+  if (filters.lastContactedFrom) {
+    clauses.push('d.last_contacted_at >= ?');
+    params.push(toDate(filters.lastContactedFrom));
+  }
+  if (filters.lastContactedTo) {
+    clauses.push('DATE(d.last_contacted_at) <= ?');
+    params.push(toDate(filters.lastContactedTo));
+  }
+
   return { where: `WHERE ${clauses.join(' AND ')}`, params };
 }
 
@@ -181,6 +199,39 @@ const FROM_SQL = `
     GROUP BY debtor_id
   ) ca ON ca.debtor_id = d.id
 `;
+
+async function listPortfolioBuckets(user) {
+  const agentName = String(user?.name || '').trim();
+  if (!agentName) return [];
+  const [rows] = await pool.query(
+    `SELECT DISTINCT d.bucket AS bucket
+     FROM debtors d
+     WHERE d.deleted_at IS NULL
+       AND d.is_closed = 0
+       AND d.assigned_agent = ?
+       AND d.bucket IS NOT NULL
+       AND d.bucket <> ''
+     ORDER BY d.bucket ASC`,
+    [agentName]
+  );
+  return rows.map((r) => r.bucket).filter(Boolean);
+}
+
+async function listPortfolioClients(user) {
+  const agentName = String(user?.name || '').trim();
+  if (!agentName) return [];
+  const [rows] = await pool.query(
+    `SELECT DISTINCT c.id, c.name
+     FROM debtors d
+     INNER JOIN clients c ON c.id = d.client_id AND c.deleted_at IS NULL
+     WHERE d.deleted_at IS NULL
+       AND d.is_closed = 0
+       AND d.assigned_agent = ?
+     ORDER BY c.name ASC`,
+    [agentName]
+  );
+  return rows.map((r) => ({ id: r.id, name: r.name }));
+}
 
 async function listPortfolio(user, filters = {}) {
   requireAgentUser(user);
@@ -716,6 +767,8 @@ async function startPortfolioCall(user, debtorId, payload = {}) {
 
 module.exports = {
   listPortfolio,
+  listPortfolioBuckets,
+  listPortfolioClients,
   getPortfolioTotals,
   sendPortfolioSms,
   sendPortfolioEmail,

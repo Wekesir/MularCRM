@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, Mail, Send } from 'lucide-react';
+import { ArrowRight, KeyRound, Mail, Send } from 'lucide-react';
 import { toast } from 'react-toastify';
 import AuthFormField from '../../components/auth/AuthFormField';
 import LoadingButton from '../../components/LoadingButton';
@@ -30,6 +30,14 @@ function ForgotPasswordPage() {
   return (
     <div className="auth-panel auth-panel-modern">
       <div className="auth-panel-header">
+        {/* Key avatar */}
+        <div className="auth-avatar" aria-hidden="true">
+          <div className="auth-avatar-ring auth-avatar-ring--amber" />
+          <div className="auth-avatar-inner auth-avatar-inner--amber">
+            <KeyRound className="auth-avatar-icon auth-avatar-icon--amber" strokeWidth={1.5} />
+          </div>
+        </div>
+
         <span className="auth-panel-badge">
           <Send className="auth-panel-badge-icon" aria-hidden="true" />
           Account recovery

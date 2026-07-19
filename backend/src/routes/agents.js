@@ -4,6 +4,8 @@ const { getKpisByUserId, upsertKpis } = require('../services/agentKpiService');
 const { getAgentDashboard } = require('../services/agentDashboardService');
 const {
   listPortfolio,
+  listPortfolioBuckets,
+  listPortfolioClients,
   getPortfolioTotals,
   sendPortfolioSms,
   sendPortfolioEmail,
@@ -95,6 +97,30 @@ router.get('/me/portfolio/totals', async (req, res) => {
       return res.status(403).json({ message: error.message });
     }
     res.status(500).json({ message: 'Failed to load portfolio totals', detail: error.message });
+  }
+});
+
+router.get('/me/portfolio/buckets', async (req, res) => {
+  try {
+    const buckets = await listPortfolioBuckets(req.user);
+    res.json(buckets);
+  } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Failed to list portfolio buckets', detail: error.message });
+  }
+});
+
+router.get('/me/portfolio/clients', async (req, res) => {
+  try {
+    const clients = await listPortfolioClients(req.user);
+    res.json(clients);
+  } catch (error) {
+    if (error.code === 'FORBIDDEN' || error.status === 403) {
+      return res.status(403).json({ message: error.message });
+    }
+    res.status(500).json({ message: 'Failed to list portfolio clients', detail: error.message });
   }
 });
 

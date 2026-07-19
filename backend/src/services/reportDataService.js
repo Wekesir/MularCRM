@@ -354,10 +354,12 @@ function buildScope({
   const scope = resolveReportScope(viewer, filters);
 
   if (scope.mode === 'agent') {
+    // Force self-scope: ignore any client-supplied agentId.
     if (agentIdColumn) {
       clauses.push(`${agentIdColumn} = ?`);
       params.push(Number(viewer.id));
     } else {
+      // Cases are assigned by collector display name.
       clauses.push(`${agentNameColumn} = ?`);
       params.push(String(viewer.name || ''));
     }
@@ -1153,52 +1155,101 @@ async function promiseToPay(filters, viewer) {
 
 async function agingReport(filters, viewer) {
   const { page, pageSize, offset } = parsePageParams(filters);
+  const detailView =
+    filters.detail === 'debtors' ||
+    filters.detail === '1' ||
+    filters.view === 'debtors';
+
   const { clauses, params } = buildScope({ viewer, filters });
   const where = ['d.deleted_at IS NULL', ...clauses];
   applyDebtorReportFilters(where, params, filters, { defaultCaseClosed: 'open' });
   const whereSql = `WHERE ${where.join(' AND ')}`;
 
-  const cacheKey = kpiCacheKey('aging-report', viewer, filters);
-  let bucketMeta = getCachedKpi(cacheKey);
-  if (!bucketMeta) {
-    const [bucketRows] = await pool.query(
-      `SELECT COALESCE(d.bucket, 'Current') AS bucket,
-              COUNT(*) AS debtors,
-              COALESCE(SUM(d.loan_amount), 0) AS loan_total,
-              COALESCE(SUM(d.total_paid), 0) AS collected,
-              COALESCE(SUM(d.outstanding_balance), 0) AS outstanding,
-              COALESCE(AVG(d.overdue_days), 0) AS avg_dpd
-       FROM debtors d
-       LEFT JOIN clients c ON c.id = d.client_id
-       ${whereSql}
-       GROUP BY COALESCE(d.bucket, 'Current')`,
-      params
-    );
-    const bucketMap = new Map(bucketRows.map((r) => [r.bucket, r]));
-    const labels = BUCKET_ORDER.filter((b) => bucketMap.has(b)).concat(
-      [...bucketMap.keys()].filter((b) => !BUCKET_ORDER.includes(b))
-    );
-    const totalOutstanding = labels.reduce(
-      (s, b) => s + toNumber(bucketMap.get(b)?.outstanding),
-      0
-    );
-    const overdue90 = ['91-180', '180+'].reduce(
-      (s, b) => s + toNumber(bucketMap.get(b)?.outstanding),
-      0
-    );
-    const currentOut = toNumber(bucketMap.get('Current')?.outstanding);
-    const totalDebtors = labels.reduce((s, b) => s + toNumber(bucketMap.get(b)?.debtors), 0);
-    const weightedDpd =
-      totalOutstanding > 0
-        ? Math.round(
-            labels.reduce((s, b) => {
-              const row = bucketMap.get(b);
-              return s + toNumber(row?.avg_dpd) * toNumber(row?.outstanding);
-            }, 0) / totalOutstanding
-          )
-        : 0;
-    bucketMeta = { totalOutstanding, overdue90, currentOut, weightedDpd, totalDebtors };
-    setCachedKpi(cacheKey, bucketMeta);
+  const [bucketRows] = await pool.query(
+    `SELECT COALESCE(d.bucket, 'Current') AS bucket,
+            COUNT(*) AS debtors,
+            COALESCE(SUM(d.loan_amount), 0) AS loan_total,
+            COALESCE(SUM(d.total_paid), 0) AS collected,
+            COALESCE(SUM(d.outstanding_balance), 0) AS outstanding,
+            COALESCE(AVG(d.overdue_days), 0) AS avg_dpd
+     FROM debtors d
+     LEFT JOIN clients c ON c.id = d.client_id
+     ${whereSql}
+     GROUP BY COALESCE(d.bucket, 'Current')`,
+    params
+  );
+  const bucketMap = new Map(bucketRows.map((r) => [r.bucket, r]));
+  const labels = BUCKET_ORDER.filter((b) => bucketMap.has(b)).concat(
+    [...bucketMap.keys()].filter((b) => !BUCKET_ORDER.includes(b))
+  );
+  const totalOutstanding = labels.reduce(
+    (s, b) => s + toNumber(bucketMap.get(b)?.outstanding),
+    0
+  );
+  const overdue90 = ['91-180', '180+'].reduce(
+    (s, b) => s + toNumber(bucketMap.get(b)?.outstanding),
+    0
+  );
+  const currentOut = toNumber(bucketMap.get('Current')?.outstanding);
+  const totalDebtors = labels.reduce((s, b) => s + toNumber(bucketMap.get(b)?.debtors), 0);
+  const weightedDpd =
+    totalOutstanding > 0
+      ? Math.round(
+          labels.reduce((s, b) => {
+            const row = bucketMap.get(b);
+            return s + toNumber(row?.avg_dpd) * toNumber(row?.outstanding);
+          }, 0) / totalOutstanding
+        )
+      : 0;
+
+  const summary = [
+    { key: 'outstanding', label: 'Outstanding', value: totalOutstanding, format: 'money' },
+    { key: 'overdue90', label: '90+ outstanding', value: overdue90, format: 'money' },
+    {
+      key: 'currentShare',
+      label: 'Current share',
+      value: pct(currentOut, totalOutstanding),
+      format: 'percent',
+    },
+    { key: 'avgDpd', label: 'Weighted avg DPD', value: weightedDpd },
+    { key: 'debtors', label: 'Debtors', value: totalDebtors },
+  ];
+
+  // Default aging view: bucket rollup (the actual aging report).
+  if (!detailView) {
+    const allRows = labels.map((bucket) => {
+      const r = bucketMap.get(bucket) || {};
+      const outstanding = toNumber(r.outstanding);
+      return {
+        id: bucket,
+        bucket,
+        debtors: toNumber(r.debtors),
+        loanAmount: toNumber(r.loan_total),
+        collected: toNumber(r.collected),
+        outstanding,
+        avgDpd: Math.round(toNumber(r.avg_dpd)),
+        share: pct(outstanding, totalOutstanding),
+      };
+    });
+    const pageRows = allRows.slice(offset, offset + pageSize);
+    return wrapResult('aging-report', filters, {
+      summary,
+      series: [],
+      columns: [
+        { key: 'bucket', label: 'Bucket' },
+        { key: 'debtors', label: 'Debtors', format: 'number' },
+        { key: 'loanAmount', label: 'Loan', format: 'money' },
+        { key: 'collected', label: 'Paid', format: 'money' },
+        { key: 'outstanding', label: 'Outstanding', format: 'money' },
+        { key: 'avgDpd', label: 'Avg DPD', format: 'number' },
+        { key: 'share', label: 'Share', format: 'percent' },
+      ],
+      rows: pageRows,
+      total: allRows.length,
+      page,
+      pageSize,
+      hasMore: offset + pageRows.length < allRows.length,
+    });
   }
 
   const [[countRow]] = await pool.query(
@@ -1222,18 +1273,7 @@ async function agingReport(filters, viewer) {
   );
 
   return wrapResult('aging-report', filters, {
-    summary: [
-      { key: 'outstanding', label: 'Outstanding', value: bucketMeta.totalOutstanding, format: 'money' },
-      { key: 'overdue90', label: '90+ outstanding', value: bucketMeta.overdue90, format: 'money' },
-      {
-        key: 'currentShare',
-        label: 'Current share',
-        value: pct(bucketMeta.currentOut, bucketMeta.totalOutstanding),
-        format: 'percent',
-      },
-      { key: 'avgDpd', label: 'Weighted avg DPD', value: bucketMeta.weightedDpd },
-      { key: 'debtors', label: 'Debtors', value: bucketMeta.totalDebtors },
-    ],
+    summary,
     series: [],
     columns: [
       { key: 'name', label: 'Debtor' },

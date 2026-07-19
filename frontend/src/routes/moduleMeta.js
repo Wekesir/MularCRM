@@ -31,7 +31,7 @@ export const moduleMeta = {
   },
   call_centers: {
     title: 'Call Centers',
-    description: 'Create and manage mini call centers, supervisors, and staffing.',
+    description: 'Create call centers, view staff, and add or transfer supervisors and agents.',
   },
 
   case_management: {
@@ -88,6 +88,10 @@ export const moduleMeta = {
   ptp: {
     title: 'PTP (Promise to Pay)',
     description: 'Manage promise-to-pay arrangements made with debtors.',
+  },
+  restructured_loans: {
+    title: 'Restructured Loans',
+    description: 'Review and approve agent-proposed loan repayment plans.',
   },
   non_confirmed_payments: {
     title: 'Non-confirmed Payments',
@@ -249,6 +253,7 @@ export const pathToModuleKey = {
   '/payments/payments': 'payments',
   '/payments/commissions': 'commissions',
   '/payments/ptp': 'ptp',
+  '/payments/restructured-loans': 'restructured_loans',
   '/payments/non-confirmed-payments': 'non_confirmed_payments',
 
   '/reports/debtor-summary': 'debtor_summary',
@@ -335,6 +340,7 @@ export const pathToPermission = {
   '/payments/payments': { module: 'payments', sub: 'payments' },
   '/payments/commissions': { module: 'payments', sub: 'commissions' },
   '/payments/ptp': { module: 'payments', sub: 'ptp' },
+  '/payments/restructured-loans': { module: 'payments', sub: 'restructured_loans' },
   '/payments/non-confirmed-payments': {
     module: 'payments',
     sub: 'non_confirmed_payments',

@@ -15,12 +15,26 @@ function buildParams(filters = {}) {
     'bucket',
     'overdueDaysMin',
     'overdueDaysMax',
+    'balanceMin',
+    'balanceMax',
+    'lastContactedFrom',
+    'lastContactedTo',
   ];
   for (const k of keys) {
     const v = filters[k];
     if (v !== null && v !== undefined && v !== '') params[k] = v;
   }
   return params;
+}
+
+export async function fetchAgentPortfolioBuckets() {
+  const { data } = await api.get('/api/agents/me/portfolio/buckets');
+  return data;
+}
+
+export async function fetchAgentPortfolioClients() {
+  const { data } = await api.get('/api/agents/me/portfolio/clients');
+  return data;
 }
 
 export async function fetchAgentPortfolio({ page = 1, pageSize = 25, ...filters } = {}) {

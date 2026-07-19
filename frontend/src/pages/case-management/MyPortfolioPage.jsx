@@ -6,6 +6,7 @@ import {
   ChevronLast,
   ChevronLeft,
   ChevronRight,
+  CalendarRange,
   ClipboardList,
   Loader2,
   Mail,
@@ -24,16 +25,19 @@ import SectionHeader from '../../components/SectionHeader';
 import PortfolioSendModal from '../../components/PortfolioSendModal';
 import PortfolioResponseModal from '../../components/PortfolioResponseModal';
 import PortfolioCaseWorkspace from '../../components/PortfolioCaseWorkspace';
+import RestructureLoanModal from '../../components/RestructureLoanModal';
 import { usePageActions } from '../../context/PageActionsContext';
 import { useSystemConfig } from '../../context/SystemConfigContext';
 import {
   fetchAgentPortfolio,
   fetchAgentPortfolioTotals,
+  fetchAgentPortfolioBuckets,
+  fetchAgentPortfolioClients,
   sendPortfolioSms,
   sendPortfolioEmail,
   logPortfolioResponse,
 } from '../../api/agentPortfolio';
-import { fetchClients } from '../../api/clients';
+import { createLoanRestructure } from '../../api/loanRestructures';
 import { fetchContactStatuses } from '../../api/contactStatuses';
 
 const PAGE_SIZE = 25;
@@ -47,12 +51,23 @@ const QUICK_TABS = [
 
 const EMPTY_FILTERS = {
   clientId: '',
+  bucket: '',
   channel: '',
   contactStatusId: '',
+  contacted: '',
   ptp: '',
+  reminderDue: '',
+  overdueDaysMin: '',
+  overdueDaysMax: '',
+  balanceMin: '',
+  balanceMax: '',
   nextActionFrom: '',
   nextActionTo: '',
+  lastContactedFrom: '',
+  lastContactedTo: '',
 };
+
+const FALLBACK_BUCKETS = ['Current', '1-30', '31-60', '61-90', '91-180', '180+'];
 
 function formatMoney(value, symbol = '') {
   const n = Number(value) || 0;
@@ -137,15 +152,17 @@ function MyPortfolioPage() {
 
   const [search, setSearch] = useState('');
   const [quickTab, setQuickTab] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
 
   const [clients, setClients] = useState([]);
   const [contactStatuses, setContactStatuses] = useState([]);
+  const [buckets, setBuckets] = useState(FALLBACK_BUCKETS);
 
   const [sendModal, setSendModal] = useState({ open: false, mode: 'sms', debtor: null });
   const [responseModal, setResponseModal] = useState({ open: false, debtor: null, defaultChannel: 'call' });
+  const [restructureModal, setRestructureModal] = useState({ open: false, debtor: null });
   const [workspaceDebtor, setWorkspaceDebtor] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -189,11 +206,17 @@ function MyPortfolioPage() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchClients(), fetchContactStatuses()])
-      .then(([clientRows, statusRows]) => {
+    Promise.all([
+      fetchAgentPortfolioClients().catch(() => []),
+      fetchContactStatuses(),
+      fetchAgentPortfolioBuckets().catch(() => []),
+    ])
+      .then(([clientRows, statusRows, bucketRows]) => {
         if (cancelled) return;
-        setClients(Array.isArray(clientRows) ? clientRows : clientRows?.items || []);
+        setClients(Array.isArray(clientRows) ? clientRows : []);
         setContactStatuses(Array.isArray(statusRows) ? statusRows : []);
+        const fromApi = Array.isArray(bucketRows) ? bucketRows.filter(Boolean) : [];
+        setBuckets(fromApi.length ? fromApi : FALLBACK_BUCKETS);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -207,24 +230,46 @@ function MyPortfolioPage() {
         </button>
         <button
           type="button"
-          className={`af-toggle${showFilters ? ' af-toggle--active' : ''}${activeFilterCount > 0 ? ' af-toggle--has' : ''}`}
-          onClick={() => setShowFilters((v) => !v)}
-          aria-expanded={showFilters}
+          className={`rpt-filter-trigger-btn${activeFilterCount > 0 ? ' af-toggle--has' : ''}`}
+          onClick={() => {
+            setFilters(appliedFilters);
+            setFiltersOpen(true);
+          }}
+          aria-label="Open filters"
         >
           <SlidersHorizontal className="icon-sm" />
-          <span>Filters</span>
-          {activeFilterCount > 0 && <span className="af-toggle-count">{activeFilterCount}</span>}
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="rpt-filter-trigger-badge">{activeFilterCount}</span>
+          )}
         </button>
       </>
     );
     return () => setActions(null);
-  }, [setActions, loadData, isLoading, showFilters, activeFilterCount]);
+  }, [setActions, loadData, isLoading, activeFilterCount, appliedFilters]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
 
-  const applyFilters = () => { setAppliedFilters(filters); setPage(1); };
-  const clearFilters = () => { setFilters(EMPTY_FILTERS); setAppliedFilters(EMPTY_FILTERS); setPage(1); };
+  const setFilterField = (key, value) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const applyFilters = () => {
+    setAppliedFilters(filters);
+    // Modal filters take precedence over quick-tab presets.
+    setQuickTab('all');
+    setPage(1);
+    setFiltersOpen(false);
+  };
+
+  const clearFilters = () => {
+    setFilters(EMPTY_FILTERS);
+    setAppliedFilters(EMPTY_FILTERS);
+    setQuickTab('all');
+    setPage(1);
+    setFiltersOpen(false);
+  };
 
   const handleSend = async (payload) => {
     if (!sendModal.debtor) return;
@@ -259,6 +304,21 @@ function MyPortfolioPage() {
       loadData();
     } catch (error) {
       toast.error(error?.response?.data?.message || 'Failed to log response');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleRestructure = async (payload) => {
+    if (!restructureModal.debtor) return;
+    setIsSaving(true);
+    try {
+      await createLoanRestructure(payload);
+      toast.success('Repayment plan submitted for supervisor approval');
+      setRestructureModal({ open: false, debtor: null });
+      loadData();
+    } catch (error) {
+      toast.error(error?.response?.data?.message || 'Failed to submit restructure');
     } finally {
       setIsSaving(false);
     }
@@ -339,61 +399,6 @@ function MyPortfolioPage() {
             />
           </div>
         </div>
-
-        {/* Advanced filters */}
-        {showFilters && (
-          <div className="af-panel">
-            <div className="af-grid">
-              <div className="af-field">
-                <span className="af-label">Client</span>
-                <select className="af-select" value={filters.clientId} onChange={(e) => setFilters((p) => ({ ...p, clientId: e.target.value }))}>
-                  <option value="">All clients</option>
-                  {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-              <div className="af-field">
-                <span className="af-label">Channel used</span>
-                <select className="af-select" value={filters.channel} onChange={(e) => setFilters((p) => ({ ...p, channel: e.target.value }))}>
-                  <option value="">Any channel</option>
-                  <option value="call">Call</option>
-                  <option value="sms">SMS</option>
-                  <option value="email">Email</option>
-                </select>
-              </div>
-              <div className="af-field">
-                <span className="af-label">Contact status</span>
-                <select className="af-select" value={filters.contactStatusId} onChange={(e) => setFilters((p) => ({ ...p, contactStatusId: e.target.value }))}>
-                  <option value="">Any status</option>
-                  {contactStatuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <div className="af-field">
-                <span className="af-label">PTP</span>
-                <select className="af-select" value={filters.ptp} onChange={(e) => setFilters((p) => ({ ...p, ptp: e.target.value }))}>
-                  <option value="">Any</option>
-                  <option value="1">Has PTP</option>
-                  <option value="0">No PTP</option>
-                </select>
-              </div>
-              <div className="af-field af-field-range">
-                <span className="af-label">Next action date</span>
-                <div className="af-range">
-                  <input type="date" className="af-input" value={filters.nextActionFrom} onChange={(e) => setFilters((p) => ({ ...p, nextActionFrom: e.target.value }))} />
-                  <span className="af-range-sep">→</span>
-                  <input type="date" className="af-input" value={filters.nextActionTo} onChange={(e) => setFilters((p) => ({ ...p, nextActionTo: e.target.value }))} />
-                </div>
-              </div>
-            </div>
-            <div className="af-actions">
-              <button type="button" className="btn-icon-outline af-clear-btn" onClick={clearFilters}>
-                <X className="icon-sm" /> Clear all
-              </button>
-              <button type="button" className="btn-primary btn-sm" onClick={applyFilters}>
-                Apply Filters
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Table */}
         <div className="cm-table-wrap">
@@ -546,6 +551,15 @@ function MyPortfolioPage() {
                         >
                           <ClipboardList className="icon-sm" />
                         </button>
+                        <button
+                          type="button"
+                          className="mp-action-btn mp-action-btn--restructure"
+                          title="Restructure loan"
+                          aria-label="Restructure loan"
+                          onClick={() => setRestructureModal({ open: true, debtor: item })}
+                        >
+                          <CalendarRange className="icon-sm" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -587,6 +601,7 @@ function MyPortfolioPage() {
         onLogResponse={(d, channel) =>
           setResponseModal({ open: true, debtor: d, defaultChannel: channel || 'call' })
         }
+        onRestructure={(d) => setRestructureModal({ open: true, debtor: d })}
       />
 
       <PortfolioSendModal
@@ -607,6 +622,251 @@ function MyPortfolioPage() {
         onClose={() => setResponseModal({ open: false, debtor: null, defaultChannel: 'call' })}
         onSave={handleLogResponse}
       />
+
+      <RestructureLoanModal
+        open={restructureModal.open}
+        debtor={restructureModal.debtor}
+        isSaving={isSaving}
+        onClose={() => setRestructureModal({ open: false, debtor: null })}
+        onSave={handleRestructure}
+      />
+
+      {filtersOpen && (
+        <div
+          className="modal-backdrop modal-backdrop-static"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setFiltersOpen(false);
+          }}
+        >
+          <div
+            className="modal-panel rpt-filter-modal rpt-filter-modal--wide"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Portfolio filters"
+          >
+            <div className="rpt-filter-modal-header">
+              <div className="rpt-filter-modal-title-wrap">
+                <span className="rpt-filter-modal-icon" aria-hidden="true">
+                  <SlidersHorizontal className="icon-sm" />
+                </span>
+                <h2 className="rpt-filter-modal-title">Filters</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setFiltersOpen(false)}
+                aria-label="Close filters"
+              >
+                <X className="icon-sm" />
+              </button>
+            </div>
+
+            <div className="rpt-filter-modal-body">
+              <form
+                className="rpt-filters rpt-filters--modal"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  applyFilters();
+                }}
+              >
+                <div className="af-grid">
+                  <div className="af-field">
+                    <span className="af-label">Client</span>
+                    <select
+                      className="af-select"
+                      value={filters.clientId}
+                      onChange={(e) => setFilterField('clientId', e.target.value)}
+                    >
+                      <option value="">All clients</option>
+                      {clients.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">Bucket</span>
+                    <select
+                      className="af-select"
+                      value={filters.bucket}
+                      onChange={(e) => setFilterField('bucket', e.target.value)}
+                    >
+                      <option value="">All buckets</option>
+                      {buckets.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">Contact status</span>
+                    <select
+                      className="af-select"
+                      value={filters.contactStatusId}
+                      onChange={(e) => setFilterField('contactStatusId', e.target.value)}
+                    >
+                      <option value="">Any status</option>
+                      {contactStatuses.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">Contacted</span>
+                    <select
+                      className="af-select"
+                      value={filters.contacted}
+                      onChange={(e) => setFilterField('contacted', e.target.value)}
+                    >
+                      <option value="">Any</option>
+                      <option value="1">Contacted</option>
+                      <option value="0">Not contacted</option>
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">Channel used</span>
+                    <select
+                      className="af-select"
+                      value={filters.channel}
+                      onChange={(e) => setFilterField('channel', e.target.value)}
+                    >
+                      <option value="">Any channel</option>
+                      <option value="call">Call</option>
+                      <option value="sms">SMS</option>
+                      <option value="email">Email</option>
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">PTP</span>
+                    <select
+                      className="af-select"
+                      value={filters.ptp}
+                      onChange={(e) => setFilterField('ptp', e.target.value)}
+                    >
+                      <option value="">Any</option>
+                      <option value="1">Has PTP</option>
+                      <option value="0">No PTP</option>
+                    </select>
+                  </div>
+
+                  <div className="af-field">
+                    <span className="af-label">Reminders</span>
+                    <select
+                      className="af-select"
+                      value={filters.reminderDue}
+                      onChange={(e) => setFilterField('reminderDue', e.target.value)}
+                    >
+                      <option value="">Any</option>
+                      <option value="due">Due (today or overdue)</option>
+                      <option value="today">Due today</option>
+                      <option value="overdue">Overdue</option>
+                      <option value="upcoming">Upcoming</option>
+                    </select>
+                  </div>
+
+                  <div className="af-field af-field-range">
+                    <span className="af-label">DPD range</span>
+                    <div className="af-range">
+                      <input
+                        type="number"
+                        className="af-input"
+                        min="0"
+                        placeholder="Min"
+                        value={filters.overdueDaysMin}
+                        onChange={(e) => setFilterField('overdueDaysMin', e.target.value)}
+                      />
+                      <span className="af-range-sep">→</span>
+                      <input
+                        type="number"
+                        className="af-input"
+                        min="0"
+                        placeholder="Max"
+                        value={filters.overdueDaysMax}
+                        onChange={(e) => setFilterField('overdueDaysMax', e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="af-field af-field-range">
+                    <span className="af-label">Outstanding balance</span>
+                    <div className="af-range">
+                      <input
+                        type="number"
+                        className="af-input"
+                        min="0"
+                        placeholder="Min"
+                        value={filters.balanceMin}
+                        onChange={(e) => setFilterField('balanceMin', e.target.value)}
+                      />
+                      <span className="af-range-sep">→</span>
+                      <input
+                        type="number"
+                        className="af-input"
+                        min="0"
+                        placeholder="Max"
+                        value={filters.balanceMax}
+                        onChange={(e) => setFilterField('balanceMax', e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="af-field af-field-range">
+                    <span className="af-label">Next action date</span>
+                    <div className="af-range">
+                      <input
+                        type="date"
+                        className="af-input"
+                        value={filters.nextActionFrom}
+                        onChange={(e) => setFilterField('nextActionFrom', e.target.value)}
+                      />
+                      <span className="af-range-sep">→</span>
+                      <input
+                        type="date"
+                        className="af-input"
+                        value={filters.nextActionTo}
+                        onChange={(e) => setFilterField('nextActionTo', e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="af-field af-field-range">
+                    <span className="af-label">Last contacted</span>
+                    <div className="af-range">
+                      <input
+                        type="date"
+                        className="af-input"
+                        value={filters.lastContactedFrom}
+                        onChange={(e) => setFilterField('lastContactedFrom', e.target.value)}
+                      />
+                      <span className="af-range-sep">→</span>
+                      <input
+                        type="date"
+                        className="af-input"
+                        value={filters.lastContactedTo}
+                        onChange={(e) => setFilterField('lastContactedTo', e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rpt-filter-modal-actions">
+                  <button type="button" className="rpt-reset-btn" onClick={clearFilters}>
+                    <X className="icon-sm" />
+                    Reset
+                  </button>
+                  <button type="submit" className="btn-primary btn-sm">
+                    Apply filters
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

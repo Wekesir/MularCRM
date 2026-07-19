@@ -8,6 +8,7 @@ import {
   Building2,
   CalendarCheck2,
   CalendarClock,
+  CalendarRange,
   CircleCheck,
   CircleDollarSign,
   CircleSlash,
@@ -91,6 +92,7 @@ export const sidebarIcons = {
   '/payments/payments': Wallet,
   '/payments/commissions': HandCoins,
   '/payments/ptp': CalendarCheck2,
+  '/payments/restructured-loans': CalendarRange,
   '/payments/non-confirmed-payments': CircleDollarSign,
 
   // Reports

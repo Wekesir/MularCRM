@@ -57,17 +57,19 @@ export function defaultReportFilters(slug) {
   return base;
 }
 
-export function countActiveReportFilters(filters, slug) {
+export function countActiveReportFilters(filters, slug, { isAgent = false } = {}) {
   const showDateRange = showDateRangeFor(slug);
-  const advancedFields = getAdvancedFields(slug);
+  const advancedFields = getAdvancedFields(slug, { isAgent });
+  const showClient = showClientFor(slug, { isAgent });
+  const showAgent = showAgentFor(slug, { isAgent });
   let n = 0;
   if (showDateRange) {
     const def = getRange(29);
     if (filters.dateFrom && filters.dateFrom !== def.dateFrom) n++;
     if (filters.dateTo && filters.dateTo !== def.dateTo) n++;
   }
-  if (filters.clientId) n++;
-  if (filters.agentId) n++;
+  if (showClient && filters.clientId) n++;
+  if (showAgent && filters.agentId) n++;
   if (filters.search) n++;
   for (const key of advancedFields) {
     if (filters[key] !== null && filters[key] !== undefined && filters[key] !== '') n++;
@@ -87,13 +89,17 @@ function ReportFilters({
   agents = [],
   slug = 'debtor-summary',
   showCallCenter = false,
+  isAgent = false,
   busy = false,
   modal = false,
 }) {
   const showDateRange = showDateRangeFor(slug);
-  const showClient = showClientFor(slug);
-  const showAgent = showAgentFor(slug);
-  const advancedFields = useMemo(() => getAdvancedFields(slug), [slug]);
+  const showClient = showClientFor(slug, { isAgent });
+  const showAgent = showAgentFor(slug, { isAgent });
+  const advancedFields = useMemo(
+    () => getAdvancedFields(slug, { isAgent }),
+    [slug, isAgent]
+  );
   const fieldSet = useMemo(() => new Set(advancedFields), [advancedFields]);
   const has = (key) => fieldSet.has(key);
 
@@ -273,6 +279,22 @@ function ReportFilters({
       {advancedFields.length > 0 && (
         <>
           <p className="rpt-filter-section-label">Advanced</p>
+
+          {has('detail') && (
+            <div className="rpt-filter-section">
+              <label className="rpt-field">
+                <span className="rpt-field-label">Report view</span>
+                <select
+                  className="rpt-input"
+                  value={filters.detail || ''}
+                  onChange={(e) => set('detail', e.target.value)}
+                >
+                  <option value="">Aging by bucket (summary)</option>
+                  <option value="debtors">Debtor detail</option>
+                </select>
+              </label>
+            </div>
+          )}
 
           {has('fileId') && (
             <div className="rpt-filter-section">

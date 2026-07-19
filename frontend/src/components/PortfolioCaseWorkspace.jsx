@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  CalendarRange,
   ClipboardList,
   Loader2,
   Mail,
@@ -105,6 +106,7 @@ function PortfolioCaseWorkspace({
   onSendSms,
   onSendEmail,
   onLogResponse,
+  onRestructure,
 }) {
   const { currencySymbol } = useSystemConfig();
   const [channelTab, setChannelTab] = useState('all');
@@ -332,6 +334,14 @@ function PortfolioCaseWorkspace({
                 >
                   <ClipboardList className="icon-sm" />
                   Log
+                </button>
+                <button
+                  type="button"
+                  className="pcw-action-btn"
+                  onClick={() => onRestructure?.(debtor)}
+                >
+                  <CalendarRange className="icon-sm" />
+                  Restructure
                 </button>
               </div>
             </div>

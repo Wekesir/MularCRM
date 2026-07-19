@@ -51,6 +51,7 @@ export const sidebarNav = [
       { path: '/payments/payments', label: 'Payments' },
       { path: '/payments/commissions', label: 'Commissions' },
       { path: '/payments/ptp', label: 'PTP (Promise to Pay)' },
+      { path: '/payments/restructured-loans', label: 'Restructured Loans' },
       { path: '/payments/non-confirmed-payments', label: 'Non-confirmed Payments' },
     ],
   },

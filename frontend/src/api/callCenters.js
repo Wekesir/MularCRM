@@ -17,6 +17,14 @@ export async function fetchCallCenterStaff(id) {
   return data;
 }
 
+/** @param {number|string} id @param {'supervisor'|'agent'} kind */
+export async function fetchAssignableStaff(id, kind = 'supervisor') {
+  const { data } = await api.get(`/api/call-centers/${id}/assignable-staff`, {
+    params: { kind },
+  });
+  return data;
+}
+
 export async function createCallCenter(payload) {
   const { data } = await api.post('/api/call-centers', payload);
   return data;

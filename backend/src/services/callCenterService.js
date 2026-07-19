@@ -210,6 +210,57 @@ async function getCallCenterStaff(id) {
 }
 
 /**
+ * Candidates who can be added/transferred into a call center:
+ * unbound staff + staff currently at other centers (excludes the target center).
+ * @param {'supervisor'|'agent'} staffKind
+ * @param {number} excludeCallCenterId
+ */
+async function listAssignableStaff(staffKind, excludeCallCenterId) {
+  const roleNames =
+    staffKind === 'agent'
+      ? AGENT_ROLE_NAMES
+      : staffKind === 'supervisor'
+        ? SUPERVISOR_ROLE_NAMES
+        : null;
+
+  if (!roleNames) {
+    const err = new Error('Invalid staff kind');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
+  const excludeId = Number(excludeCallCenterId);
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.phone, u.is_active, u.call_center_id,
+            r.name AS role_name, cc.name AS call_center_name
+     FROM users u
+     JOIN roles r ON r.id = u.role_id
+     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+     WHERE u.deleted_at IS NULL
+       AND u.is_active = 1
+       AND r.name IN (?)
+       AND (u.call_center_id IS NULL OR u.call_center_id <> ?)
+     ORDER BY
+       CASE WHEN u.call_center_id IS NULL THEN 0 ELSE 1 END,
+       cc.name ASC,
+       u.name ASC`,
+    [roleNames, Number.isFinite(excludeId) ? excludeId : 0]
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    phone: r.phone,
+    isActive: Boolean(r.is_active),
+    roleName: r.role_name,
+    callCenterId: r.call_center_id != null ? Number(r.call_center_id) : null,
+    callCenterName: r.call_center_name || null,
+    unbound: r.call_center_id == null,
+  }));
+}
+
+/**
  * Move a staff user (supervisor or agent) to another call center.
  * @param {'supervisor'|'agent'} staffKind
  */
@@ -260,18 +311,31 @@ async function transferStaff(userId, toCallCenterId, staffKind, { performedBy } 
   }
 
   const fromId = user.call_center_id;
+  if (Number(fromId) === Number(toCallCenterId)) {
+    const err = new Error('User is already assigned to this call center');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+
   await pool.query('UPDATE users SET call_center_id = ? WHERE id = ?', [toCallCenterId, userId]);
 
+  const wasUnbound = fromId == null;
   const actionType =
     staffKind === 'agent'
-      ? 'call_center.agent_transferred'
-      : 'call_center.supervisor_transferred';
+      ? wasUnbound
+        ? 'call_center.agent_assigned'
+        : 'call_center.agent_transferred'
+      : wasUnbound
+        ? 'call_center.supervisor_assigned'
+        : 'call_center.supervisor_transferred';
 
   await recordActivityEvent({
     userId: performedBy?.id ?? null,
     userName: performedBy?.name ?? null,
     actionType,
-    title: `Transferred ${user.name} to ${target.name}`,
+    title: wasUnbound
+      ? `Assigned ${user.name} to ${target.name}`
+      : `Transferred ${user.name} to ${target.name}`,
     subject: user.name,
     entityType: 'user',
     entityId: String(userId),
@@ -280,6 +344,7 @@ async function transferStaff(userId, toCallCenterId, staffKind, { performedBy } 
       toCallCenterId: Number(toCallCenterId),
       toCallCenterName: target.name,
       staffKind,
+      assigned: wasUnbound,
     },
   });
 
@@ -289,6 +354,7 @@ async function transferStaff(userId, toCallCenterId, staffKind, { performedBy } 
     fromCallCenterId: fromId,
     toCallCenterId: Number(toCallCenterId),
     toCallCenterName: target.name,
+    assigned: wasUnbound,
   };
 }
 
@@ -323,6 +389,7 @@ module.exports = {
   updateCallCenter,
   softDeleteCallCenter,
   getCallCenterStaff,
+  listAssignableStaff,
   transferSupervisor,
   transferAgent,
   assertCanManageCallCenters,

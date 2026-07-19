@@ -42,6 +42,7 @@ const PERMISSION_REGISTRY = [
       { key: 'payments', label: 'Payments' },
       { key: 'commissions', label: 'Commissions' },
       { key: 'ptp', label: 'PTP (Promise to Pay)' },
+      { key: 'restructured_loans', label: 'Restructured Loans' },
       { key: 'non_confirmed_payments', label: 'Non-confirmed Payments' },
     ],
   },
@@ -162,6 +163,7 @@ function buildSeniorSupervisorPermissions() {
   setCrud(p, 'unassigned_files', ro);
   setCrud(p, 'payments.payments', ro);
   setCrud(p, 'payments.ptp', ro);
+  setCrud(p, 'payments.restructured_loans', ro);
   setCrud(p, 'settings.client_agents', CRUD);
   setCrud(p, 'settings.agent_experience', ro);
   setCrud(p, 'settings.agent_expertise', ro);
@@ -185,12 +187,19 @@ function buildSupervisorPermissions() {
   setCrud(p, 'unassigned_files', r);
   setCrud(p, 'payments.payments', ro);
   setCrud(p, 'payments.ptp', r);
+  setCrud(p, 'payments.restructured_loans', r);
   setCrud(p, 'communication.bulk_sms', r);
   setCrud(p, 'communication.bulk_emails', r);
+  // Center-scoped report suite (backend resolveReportScope → mode: center).
+  applyModuleCrud(p, 'reports', RO);
   return p;
 }
 
-/** Default matrix for Agents (personal portfolio). */
+/**
+ * Default matrix for Agents (personal portfolio).
+ * Reports are a curated self-scoped set — data handlers force agent mode.
+ * Portfolio Performance and Dispute Management stay supervisor+ only.
+ */
 function buildAgentDefaultPermissions() {
   const p = buildEmptyPermissions();
   const r = { create: true, read: true, update: true, delete: false };
@@ -199,7 +208,20 @@ function buildAgentDefaultPermissions() {
   setCrud(p, 'dashboard', CRUD);
   setCrud(p, 'case_management.my_portfolio', r);
   setCrud(p, 'payments.ptp', r);
+  setCrud(p, 'payments.restructured_loans', r);
   setCrud(p, 'payments.payments', ro);
+
+  // Self-scoped operational reports (own book / own activity only).
+  setCrud(p, 'reports.debtor_summary', ro);
+  setCrud(p, 'reports.aging_report', ro);
+  setCrud(p, 'reports.promise_to_pay', ro);
+  setCrud(p, 'reports.contact_attempt', ro);
+  setCrud(p, 'reports.debtor_notes', ro);
+  setCrud(p, 'reports.payment_performance', ro);
+  setCrud(p, 'reports.recovery_rate', ro);
+  setCrud(p, 'reports.collector_performance', ro);
+  setCrud(p, 'reports.goip_calls_report', ro);
+  setCrud(p, 'reports.sms_report', ro);
   return p;
 }
 
@@ -266,6 +288,7 @@ function buildCollectionsManagerPermissions() {
   setCrud(p, 'unassigned_files', R);
   setCrud(p, 'payments.payments', R);
   setCrud(p, 'payments.ptp', R);
+  setCrud(p, 'payments.restructured_loans', R);
   setCrud(p, 'payments.commissions', RO);
   setCrud(p, 'payments.non_confirmed_payments', RO);
   setCrud(p, 'communication.bulk_sms', R);
@@ -299,6 +322,7 @@ function buildCustomerServiceOfficerPermissions() {
   setCrud(p, 'communication.bulk_emails', R);
   setCrud(p, 'contact_upload', R);
   setCrud(p, 'payments.ptp', R);
+  setCrud(p, 'payments.restructured_loans', R);
   return p;
 }
 

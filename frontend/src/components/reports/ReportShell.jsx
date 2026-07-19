@@ -42,6 +42,7 @@ import ReportGatePanel from './ReportGatePanel';
 import { downloadReportExport, fetchReportData } from '../../api/reports';
 import { fetchClients } from '../../api/clients';
 import { fetchAgents } from '../../api/agents';
+import { fetchAgentPortfolioClients } from '../../api/agentPortfolio';
 import { useReportGate } from '../../hooks/useReportGate';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useAppSelector } from '../../store/hooks';
@@ -95,20 +96,24 @@ function getKpiMeta(key, label) {
   return { icon: Hash, accent: 'var(--theme-color)' };
 }
 
-function buildFilterParams(applied, slug) {
+function buildFilterParams(applied, slug, { isAgent = false } = {}) {
   const showDateRange = showDateRangeFor(slug);
-  const advancedFields = new Set(getAdvancedFields(slug));
+  const advancedFields = new Set(getAdvancedFields(slug, { isAgent }));
   const params = {
     search: applied.search || undefined,
     clientId: applied.clientId || undefined,
-    agentId: applied.agentId || undefined,
   };
+  // Agents are always self-scoped server-side — never send agentId/callCenterId.
+  if (!isAgent) {
+    params.agentId = applied.agentId || undefined;
+  }
   if (showDateRange) {
     params.dateFrom = applied.dateFrom || undefined;
     params.dateTo = applied.dateTo || undefined;
   }
   for (const key of ALL_ADVANCED_KEYS) {
     if (!advancedFields.has(key)) continue;
+    if (isAgent && (key === 'callCenterId' || key === 'assignmentStatus')) continue;
     const v = applied[key];
     if (v !== null && v !== undefined && v !== '') params[key] = v;
   }
@@ -131,7 +136,7 @@ function ReportSkeleton() {
 function ReportShell({ slug, icon: Icon }) {
   const { currencySymbol } = useSystemConfig();
   const { setActions } = usePageActions();
-  const { isSystemAdmin, isSeniorSupervisor } = usePermissions();
+  const { isSystemAdmin, isSeniorSupervisor, isAgent, isSupervisor } = usePermissions();
   const { gate, loading: gateLoading, unlocking, unlock } = useReportGate(slug);
   const reportUnlocks = useAppSelector((state) => state.auth.reportUnlocks) ?? {};
   const storedUnlock = reportUnlocks[slug];
@@ -140,7 +145,7 @@ function ReportShell({ slug, icon: Icon }) {
       ? storedUnlock.token
       : null;
 
-  const showCallCenter = Boolean(isSystemAdmin || isSeniorSupervisor);
+  const showCallCenter = Boolean(isSystemAdmin || isSeniorSupervisor) && !isAgent;
 
   const [filters, setFilters] = useState(() => defaultReportFilters(slug));
   const [applied, setApplied] = useState(() => defaultReportFilters(slug));
@@ -154,7 +159,7 @@ function ReportShell({ slug, icon: Icon }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const canLoad = Boolean(gate?.canRead && (!gate.requiresPassword || gate.unlocked));
-  const activeFilterCount = countActiveReportFilters(applied, slug);
+  const activeFilterCount = countActiveReportFilters(applied, slug, { isAgent });
 
   useEffect(() => {
     const next = defaultReportFilters(slug);
@@ -165,20 +170,28 @@ function ReportShell({ slug, icon: Icon }) {
   }, [slug]);
 
   useEffect(() => {
+    if (isAgent) {
+      fetchAgentPortfolioClients()
+        .then((rows) => setClients(Array.isArray(rows) ? rows : []))
+        .catch(() => setClients([]));
+      setAgents([]);
+      return undefined;
+    }
     fetchClients()
       .then((rows) => setClients(Array.isArray(rows) ? rows : rows?.items || []))
       .catch(() => setClients([]));
     fetchAgents()
       .then((rows) => setAgents(Array.isArray(rows) ? rows : rows?.items || []))
       .catch(() => setAgents([]));
-  }, []);
+    return undefined;
+  }, [isAgent]);
 
   const load = useCallback(async () => {
     if (!canLoad) return;
     setLoading(true);
     try {
       const params = {
-        ...buildFilterParams(applied, slug),
+        ...buildFilterParams(applied, slug, { isAgent }),
         page,
         pageSize,
       };
@@ -195,7 +208,7 @@ function ReportShell({ slug, icon: Icon }) {
     } finally {
       setLoading(false);
     }
-  }, [applied, canLoad, page, pageSize, slug, unlockToken]);
+  }, [applied, canLoad, isAgent, page, pageSize, slug, unlockToken]);
 
   useEffect(() => {
     load();
@@ -204,7 +217,7 @@ function ReportShell({ slug, icon: Icon }) {
   const onExport = useCallback(async () => {
     setExporting(true);
     try {
-      const params = buildFilterParams(applied, slug);
+      const params = buildFilterParams(applied, slug, { isAgent });
       await downloadReportExport(slug, params, unlockToken);
       toast.success('Export downloaded');
     } catch (error) {
@@ -212,7 +225,7 @@ function ReportShell({ slug, icon: Icon }) {
     } finally {
       setExporting(false);
     }
-  }, [applied, slug, unlockToken]);
+  }, [applied, isAgent, slug, unlockToken]);
 
   useEffect(() => {
     if (!canLoad && !gateLoading) {
@@ -304,6 +317,16 @@ function ReportShell({ slug, icon: Icon }) {
             <ReportSkeleton />
           ) : (
             <>
+              {isAgent && (
+                <p className="rpt-agent-scope-note">
+                  Showing only your assigned cases and activity.
+                </p>
+              )}
+              {isSupervisor && !isAgent && !isSystemAdmin && !isSeniorSupervisor && (
+                <p className="rpt-agent-scope-note">
+                  Showing data for your call center only.
+                </p>
+              )}
               {summary.length > 0 && (
                 <div className="rpt-kpi-scroll" role="list" aria-label="Summary metrics">
                   {summary.map((item, i) => {
@@ -359,7 +382,9 @@ function ReportShell({ slug, icon: Icon }) {
                     </div>
                     <h2 className="empty-state-title">No results</h2>
                     <p className="empty-state-description">
-                      Try adjusting the filters to find matching records.
+                      {isAgent
+                        ? 'No matching records in your assigned portfolio. Try adjusting the filters.'
+                        : 'Try adjusting the filters to find matching records.'}
                     </p>
                   </div>
                 ) : (
@@ -514,6 +539,7 @@ function ReportShell({ slug, icon: Icon }) {
                 clients={clients}
                 agents={agents}
                 showCallCenter={showCallCenter}
+                isAgent={isAgent}
                 busy={loading}
                 modal
               />

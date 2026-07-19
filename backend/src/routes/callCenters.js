@@ -7,6 +7,7 @@ const {
   updateCallCenter,
   softDeleteCallCenter,
   getCallCenterStaff,
+  listAssignableStaff,
   transferSupervisor,
   transferAgent,
   assertCanManageCallCenters,
@@ -57,6 +58,24 @@ router.get('/:id/staff', async (req, res) => {
     res.json(staff);
   } catch (error) {
     handleServiceError(res, error, 'Failed to load call center staff');
+  }
+});
+
+router.get('/:id/assignable-staff', async (req, res) => {
+  try {
+    assertCanManageCallCenters(req.user);
+    const center = await getCallCenterById(req.params.id);
+    if (!center) return res.status(404).json({ message: 'Call center not found' });
+
+    const kind = String(req.query.kind || 'supervisor').toLowerCase();
+    if (kind !== 'supervisor' && kind !== 'agent') {
+      return res.status(400).json({ message: 'kind must be supervisor or agent' });
+    }
+
+    const candidates = await listAssignableStaff(kind, center.id);
+    res.json({ callCenterId: center.id, kind, candidates });
+  } catch (error) {
+    handleServiceError(res, error, 'Failed to load assignable staff');
   }
 });
 
