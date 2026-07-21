@@ -44,9 +44,18 @@ function formatCount(n) {
   return Number(n || 0).toLocaleString();
 }
 
+function moneyLabel(label, currencySymbol, currencyCode) {
+  const unit =
+    String(currencySymbol || '').replace(/\s/g, '') === 'KSh' ||
+    String(currencyCode || '').toUpperCase() === 'KES'
+      ? 'Kshs'
+      : currencySymbol || currencyCode || 'Kshs';
+  return `${label} (${unit})`;
+}
+
 function OrgDashboard() {
   const { colorMode } = useTheme();
-  const { currencySymbol, themeColor } = useSystemConfig();
+  const { currencySymbol, currencyCode, themeColor } = useSystemConfig();
   const { setActions } = usePageActions();
 
   const [data, setData] = useState(null);
@@ -189,6 +198,32 @@ function OrgDashboard() {
     },
   });
 
+  const topCollectorsData = useMemo(() => {
+    const top = [...(agentRows || [])]
+      .sort((a, b) => Number(b.collected || 0) - Number(a.collected || 0))
+      .slice(0, 8);
+    return {
+      labels: top.map((row) => row.agent),
+      datasets: [
+        createChartDataset({
+          label: 'Collected',
+          data: top.map((row) => Number(row.collected) || 0),
+          type: 'bar',
+          colorIndex: 1,
+        }),
+      ],
+      _count: top.length,
+    };
+  }, [agentRows, colorMode, themeColor]);
+
+  const topCollectorsOptions = useChartOptions({
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { callback: (value) => abbreviateNumber(value) } },
+    },
+  });
+
   if (isLoading && !data) {
     return (
       <div className="dashboard-page">
@@ -203,13 +238,16 @@ function OrgDashboard() {
     );
   }
 
-  const moneyPrefix = `${currencySymbol} `;
   const callCenterOverview = data?.callCenterOverview;
 
   return (
     <div className="dashboard-page">
       {callCenterOverview?.summary && (
-        <section className="stat-grid-compact" style={{ marginBottom: '1rem' }}>
+        <section
+          className="stat-grid-compact stat-grid-compact--4"
+          style={{ marginBottom: '1rem' }}
+          aria-label="Call center overview"
+        >
           <StatCard
             icon={Building2}
             numericValue={callCenterOverview.summary.activeCallCenters || 0}
@@ -286,8 +324,7 @@ function OrgDashboard() {
           icon={Wallet}
           numericValue={summary?.loanTotal || 0}
           decimals={0}
-          prefix={moneyPrefix}
-          label="Outsourced Amount"
+          label={moneyLabel('Outsourced Amount', currencySymbol, currencyCode)}
           meta={`${formatCount(summary?.fileCount)} batch files`}
           accent="theme"
           className="dashboard-stat-card"
@@ -297,8 +334,7 @@ function OrgDashboard() {
           icon={Coins}
           numericValue={summary?.collected || 0}
           decimals={0}
-          prefix={moneyPrefix}
-          label="Total Collected"
+          label={moneyLabel('Total Collected', currencySymbol, currencyCode)}
           meta={`${formatCount(summary?.debtorCount)} debtors`}
           accent="#10b981"
           className="dashboard-stat-card"
@@ -308,8 +344,7 @@ function OrgDashboard() {
           icon={Receipt}
           numericValue={summary?.outstanding || 0}
           decimals={0}
-          prefix={moneyPrefix}
-          label="Outstanding Amount"
+          label={moneyLabel('Outstanding Amount', currencySymbol, currencyCode)}
           meta="Current balance"
           accent="#f59e0b"
           className="dashboard-stat-card"
@@ -319,8 +354,7 @@ function OrgDashboard() {
           icon={CalendarCheck2}
           numericValue={summary?.ptpAmount || 0}
           decimals={0}
-          prefix={moneyPrefix}
-          label="Promise To Pay"
+          label={moneyLabel('Promise To Pay', currencySymbol, currencyCode)}
           meta={`${formatCount(summary?.ptpCount)} accounts`}
           accent="#8b5cf6"
           className="dashboard-stat-card"
@@ -330,8 +364,7 @@ function OrgDashboard() {
           icon={AlertTriangle}
           numericValue={summary?.unconfirmedAmount || 0}
           decimals={0}
-          prefix={moneyPrefix}
-          label="Non-confirmed Payments"
+          label={moneyLabel('Non-confirmed Payments', currencySymbol, currencyCode)}
           meta={`${formatCount(summary?.unconfirmedCount)} payment(s)`}
           accent="#ef4444"
           className="dashboard-stat-card"
@@ -356,6 +389,7 @@ function OrgDashboard() {
           title="Case Status"
           description="Unassigned · Assigned · Actioned"
           icon={PieChart}
+          badge="Donut"
           accent="var(--theme-color)"
           height={300}
         >
@@ -366,6 +400,7 @@ function OrgDashboard() {
           title="Collection Trend"
           description={`Monthly collections (${currencySymbol})`}
           icon={TrendingUp}
+          badge="Bar"
           accent="#10b981"
           height={300}
         >
@@ -376,6 +411,7 @@ function OrgDashboard() {
           title="Commissions"
           description={charts?.commissions?.year || String(new Date().getFullYear())}
           icon={Landmark}
+          badge="Trend"
           accent="#8b5cf6"
           height={300}
         >
@@ -384,7 +420,20 @@ function OrgDashboard() {
       </section>
 
       <section className="dashboard-bottom-grid">
-        <div className="dashboard-bottom-card">
+        <div className="dashboard-bottom-card dashboard-bottom-card--stack">
+          {topCollectorsData._count > 0 && (
+            <ChartCard
+              title="Top Collectors"
+              description={`Amount collected (${currencySymbol})`}
+              icon={UserCog}
+              badge="Bar"
+              accent="#10b981"
+              height={Math.max(240, topCollectorsData._count * 34 + 48)}
+              className="dashboard-inline-chart"
+            >
+              <Bar data={topCollectorsData} options={topCollectorsOptions} />
+            </ChartCard>
+          )}
           <SectionHeader
             icon={UserCog}
             title="Agent Performance"
@@ -409,9 +458,17 @@ function OrgDashboard() {
 }
 
 function Dashboard() {
-  const { isAgent, isSeniorSupervisor, isSupervisor, isSystemAdmin } = usePermissions();
+  const {
+    isAgent,
+    isSeniorSupervisor,
+    isRegionalManager,
+    isSupervisor,
+    isSystemAdmin,
+  } = usePermissions();
   if (isAgent) return <AgentDashboard />;
-  if (isSeniorSupervisor && !isSystemAdmin) return <SeniorSupervisorDashboard />;
+  if ((isSeniorSupervisor || isRegionalManager) && !isSystemAdmin) {
+    return <SeniorSupervisorDashboard />;
+  }
   if (isSupervisor && !isSystemAdmin) return <SupervisorDashboard />;
   return <OrgDashboard />;
 }

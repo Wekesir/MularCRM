@@ -3,6 +3,7 @@ const {
   isAgentRole,
   isSupervisorRole,
   isSeniorSupervisorRole,
+  isRegionalManagerRole,
   SUPERVISOR_ROLE_NAMES,
   AGENT_ROLE_NAMES,
 } = require('../config/orgRoles');
@@ -14,6 +15,8 @@ function normalizeCallCenter(row) {
     name: row.name,
     description: row.description || null,
     status: row.status,
+    regionId: row.region_id != null ? Number(row.region_id) : null,
+    regionName: row.region_name || null,
     createdBy: row.created_by || null,
     supervisorCount: Number(row.supervisor_count) || 0,
     agentCount: Number(row.agent_count) || 0,
@@ -24,26 +27,69 @@ function normalizeCallCenter(row) {
   };
 }
 
-async function listCallCenters({ includeInactive = false } = {}) {
+async function resolveActiveRegionId(regionId) {
+  const id = Number(regionId);
+  if (!Number.isFinite(id) || id <= 0) {
+    const err = new Error('Region is required');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+  const [rows] = await pool.query(
+    'SELECT id, is_active FROM regions WHERE id = ? LIMIT 1',
+    [id]
+  );
+  if (!rows[0]) {
+    const err = new Error('Selected region was not found');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+  if (!rows[0].is_active) {
+    const err = new Error('Selected region is inactive. Choose an active region.');
+    err.code = 'VALIDATION';
+    throw err;
+  }
+  return id;
+}
+
+async function listCallCenters({ includeInactive = false, user = null } = {}) {
   const where = ['cc.deleted_at IS NULL'];
+  const params = [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES];
   if (!includeInactive) where.push(`cc.status = 'active'`);
+
+  if (user && !user.isSystemAdmin) {
+    const { resolveCallCenterScope } = require('../config/orgRoles');
+    const scope = resolveCallCenterScope(user);
+    if (scope.mode === 'region') {
+      if (!scope.regionId) return [];
+      where.push('cc.region_id = ?');
+      params.push(scope.regionId);
+    } else if (scope.mode === 'center') {
+      if (!scope.callCenterId) return [];
+      where.push('cc.id = ?');
+      params.push(scope.callCenterId);
+    } else if (scope.mode === 'none') {
+      return [];
+    }
+  }
 
   const [rows] = await pool.query(
     `SELECT cc.*,
+            r.name AS region_name,
             (SELECT COUNT(*) FROM users u
-              JOIN roles r ON r.id = u.role_id
+              JOIN roles rol ON rol.id = u.role_id
              WHERE u.call_center_id = cc.id AND u.deleted_at IS NULL
-               AND r.name IN (?)) AS supervisor_count,
+               AND rol.name IN (?)) AS supervisor_count,
             (SELECT COUNT(*) FROM users u
-              JOIN roles r ON r.id = u.role_id
+              JOIN roles rol ON rol.id = u.role_id
              WHERE u.call_center_id = cc.id AND u.deleted_at IS NULL
-               AND r.name IN (?)) AS agent_count,
+               AND rol.name IN (?)) AS agent_count,
             (SELECT COUNT(*) FROM clients c
              WHERE c.call_center_id = cc.id AND c.deleted_at IS NULL) AS client_count
      FROM call_centers cc
+     LEFT JOIN regions r ON r.id = cc.region_id
      WHERE ${where.join(' AND ')}
      ORDER BY cc.name ASC`,
-    [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES]
+    params
   );
   return rows.map(normalizeCallCenter);
 }
@@ -51,17 +97,19 @@ async function listCallCenters({ includeInactive = false } = {}) {
 async function getCallCenterById(id) {
   const [rows] = await pool.query(
     `SELECT cc.*,
+            r.name AS region_name,
             (SELECT COUNT(*) FROM users u
-              JOIN roles r ON r.id = u.role_id
+              JOIN roles rol ON rol.id = u.role_id
              WHERE u.call_center_id = cc.id AND u.deleted_at IS NULL
-               AND r.name IN (?)) AS supervisor_count,
+               AND rol.name IN (?)) AS supervisor_count,
             (SELECT COUNT(*) FROM users u
-              JOIN roles r ON r.id = u.role_id
+              JOIN roles rol ON rol.id = u.role_id
              WHERE u.call_center_id = cc.id AND u.deleted_at IS NULL
-               AND r.name IN (?)) AS agent_count,
+               AND rol.name IN (?)) AS agent_count,
             (SELECT COUNT(*) FROM clients c
              WHERE c.call_center_id = cc.id AND c.deleted_at IS NULL) AS client_count
      FROM call_centers cc
+     LEFT JOIN regions r ON r.id = cc.region_id
      WHERE cc.id = ? AND cc.deleted_at IS NULL
      LIMIT 1`,
     [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES, id]
@@ -69,7 +117,7 @@ async function getCallCenterById(id) {
   return rows[0] ? normalizeCallCenter(rows[0]) : null;
 }
 
-async function createCallCenter({ name, description, status }, { performedBy } = {}) {
+async function createCallCenter({ name, description, status, regionId }, { performedBy } = {}) {
   const trimmed = String(name || '').trim();
   if (!trimmed) {
     const err = new Error('Call center name is required');
@@ -77,14 +125,28 @@ async function createCallCenter({ name, description, status }, { performedBy } =
     throw err;
   }
 
+  let nextRegionId = regionId;
+  if (performedBy && isRegionalManagerRole(performedBy) && !performedBy.isSystemAdmin) {
+    if (!performedBy.regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    nextRegionId = performedBy.regionId;
+  }
+
+  const resolvedRegionId = await resolveActiveRegionId(nextRegionId);
+
   try {
     const [result] = await pool.query(
-      `INSERT INTO call_centers (name, description, status, created_by)
-       VALUES (?, ?, ?, ?)`,
+      `INSERT INTO call_centers (name, description, status, region_id, created_by)
+       VALUES (?, ?, ?, ?, ?)`,
       [
         trimmed,
         description ? String(description).trim() : null,
         status === 'inactive' ? 'inactive' : 'active',
+        resolvedRegionId,
         performedBy?.id || null,
       ]
     );
@@ -99,9 +161,11 @@ async function createCallCenter({ name, description, status }, { performedBy } =
   }
 }
 
-async function updateCallCenter(id, { name, description, status }) {
+async function updateCallCenter(id, { name, description, status, regionId }, { performedBy } = {}) {
   const existing = await getCallCenterById(id);
   if (!existing) return null;
+
+  if (performedBy) await assertCallerCanAccessCallCenter(performedBy, id);
 
   const nextName = name !== undefined ? String(name).trim() : existing.name;
   if (!nextName) {
@@ -110,10 +174,21 @@ async function updateCallCenter(id, { name, description, status }) {
     throw err;
   }
 
+  let nextRegionId;
+  if (performedBy && isRegionalManagerRole(performedBy) && !performedBy.isSystemAdmin) {
+    nextRegionId = await resolveActiveRegionId(performedBy.regionId);
+  } else if (regionId !== undefined) {
+    nextRegionId = await resolveActiveRegionId(regionId);
+  } else if (existing.regionId) {
+    nextRegionId = await resolveActiveRegionId(existing.regionId);
+  } else {
+    nextRegionId = await resolveActiveRegionId(null);
+  }
+
   try {
     await pool.query(
       `UPDATE call_centers
-       SET name = ?, description = ?, status = ?
+       SET name = ?, description = ?, status = ?, region_id = ?
        WHERE id = ? AND deleted_at IS NULL`,
       [
         nextName,
@@ -127,6 +202,7 @@ async function updateCallCenter(id, { name, description, status }) {
             ? 'inactive'
             : 'active'
           : existing.status,
+        nextRegionId,
         id,
       ]
     );
@@ -375,11 +451,42 @@ function assertCanManageCallCenters(user) {
     err.status = 403;
     throw err;
   }
-  if (user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
-  const err = new Error('Only Senior Supervisors can manage call centers');
+  if (
+    user.isSystemAdmin ||
+    isSeniorSupervisorRole(user) ||
+    isRegionalManagerRole(user)
+  ) {
+    return;
+  }
+  const err = new Error('Only Senior Supervisors or Regional Managers can manage call centers');
   err.code = 'FORBIDDEN';
   err.status = 403;
   throw err;
+}
+
+async function assertCallerCanAccessCallCenter(user, centerId) {
+  if (!user || user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
+  if (!isRegionalManagerRole(user)) return;
+  const regionId = user.regionId != null ? Number(user.regionId) : null;
+  if (!regionId) {
+    const err = new Error('You are not bound to a region');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
+  const center = await getCallCenterById(centerId);
+  if (!center) {
+    const err = new Error('Call center not found');
+    err.code = 'NOT_FOUND';
+    err.status = 404;
+    throw err;
+  }
+  if (Number(center.regionId) !== Number(regionId)) {
+    const err = new Error('This call center is not in your region');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
 }
 
 module.exports = {
@@ -393,4 +500,5 @@ module.exports = {
   transferSupervisor,
   transferAgent,
   assertCanManageCallCenters,
+  assertCallerCanAccessCallCenter,
 };

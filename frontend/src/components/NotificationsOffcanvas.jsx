@@ -15,6 +15,7 @@ import {
   PAGE_SIZE,
 } from '../api/notifications';
 import { useUser } from '../context/UserContext';
+import { setUnreadDocumentTitleCount } from '../utils/documentTitle';
 
 const TYPE_ICONS = {
   info: Info,
@@ -68,8 +69,14 @@ export function useNotifications() {
   }, []);
 
   useEffect(() => {
+    setUnreadDocumentTitleCount(unreadCount);
+  }, [unreadCount]);
+
+  useEffect(() => {
     if (user.email) {
       refreshUnreadCount();
+    } else {
+      setUnreadCount(0);
     }
   }, [refreshUnreadCount, user.email]);
 
@@ -109,12 +116,13 @@ export function useNotifications() {
     setHasMore(true);
     setInitialLoaded(false);
     loadPage(1, false);
-  }, [open, loadPage]);
+    refreshUnreadCount();
+  }, [open, loadPage, refreshUnreadCount]);
 
   const loadMore = useCallback(() => {
-    if (!hasMore || loadingRef.current) return;
+    if (!hasMore || loadingRef.current || !initialLoaded) return;
     loadPage(page + 1, true);
-  }, [hasMore, loadPage, page]);
+  }, [hasMore, loadPage, page, initialLoaded]);
 
   const markAllRead = useCallback(async () => {
     try {
@@ -161,6 +169,12 @@ export function useNotifications() {
     markAllRead,
     markRead,
   };
+}
+
+/** Load the next page when the user is near the bottom of the scroll container. */
+function isNearBottom(el, thresholdPx = 160) {
+  if (!el) return false;
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - thresholdPx;
 }
 
 export function NotificationsBellButton({ panel, className = '' }) {
@@ -222,8 +236,23 @@ export function NotificationsOffcanvas({ panel }) {
     };
   }, [open, setOpen]);
 
+  // Scroll-near-bottom loader (primary).
   useEffect(() => {
-    if (!open || !hasMore) return undefined;
+    if (!open || !hasMore || !initialLoaded) return undefined;
+    const root = scrollRootRef.current;
+    if (!root) return undefined;
+
+    const onScroll = () => {
+      if (isNearBottom(root)) loadMore();
+    };
+
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => root.removeEventListener('scroll', onScroll);
+  }, [open, hasMore, initialLoaded, loadMore, items.length]);
+
+  // IntersectionObserver on the footer sentinel (covers short lists / no scroll yet).
+  useEffect(() => {
+    if (!open || !hasMore || !initialLoaded) return undefined;
 
     const root = scrollRootRef.current;
     const sentinel = sentinelRef.current;
@@ -233,12 +262,22 @@ export function NotificationsOffcanvas({ panel }) {
       ([entry]) => {
         if (entry.isIntersecting) loadMore();
       },
-      { root, rootMargin: '120px', threshold: 0 }
+      { root, rootMargin: '160px', threshold: 0 }
     );
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [open, hasMore, loadMore, items.length]);
+  }, [open, hasMore, initialLoaded, loadMore, items.length]);
+
+  // If the first page does not fill the panel, keep loading until it does or hasMore is false.
+  useEffect(() => {
+    if (!open || !hasMore || !initialLoaded || loadingMore || loading) return;
+    const root = scrollRootRef.current;
+    if (!root) return;
+    if (root.scrollHeight <= root.clientHeight + 8) {
+      loadMore();
+    }
+  }, [open, hasMore, initialLoaded, loadingMore, loading, items.length, loadMore]);
 
   return (
     <>
@@ -338,12 +377,14 @@ export function NotificationsOffcanvas({ panel }) {
               </ul>
 
               {hasMore && (
-                <div ref={sentinelRef} className="notifications-load-more">
-                  {loadingMore && (
+                <div ref={sentinelRef} className="notifications-load-more" aria-live="polite">
+                  {loadingMore ? (
                     <>
                       <Loader2 className="notifications-loading-spinner" aria-hidden="true" />
                       <span>Loading more…</span>
                     </>
+                  ) : (
+                    <span>Scroll to load more…</span>
                   )}
                 </div>
               )}

@@ -4,6 +4,10 @@ import { Settings } from 'lucide-react';
 import ObservedPageHeader from '../../components/ObservedPageHeader';
 import { useSystemConfig } from '../../context/SystemConfigContext';
 import { usePermissions } from '../../hooks/usePermissions';
+import {
+  clearPageDocumentTitle,
+  setPageDocumentTitle,
+} from '../../utils/documentTitle';
 
 const submodules = [
   { path: '/system-configurations/business', label: 'Business Configs' },
@@ -23,10 +27,8 @@ function SystemConfigLayout() {
   );
 
   useEffect(() => {
-    document.title = `System Configurations | ${businessName}`;
-    return () => {
-      document.title = businessName;
-    };
+    setPageDocumentTitle('System Configurations', businessName);
+    return () => clearPageDocumentTitle(businessName);
   }, [businessName]);
 
   return (

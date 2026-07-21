@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OMNICRM Custom CRM Integration Template for Yeastar P-Series Cloud Edition.
+  Replace {{API_BASE_URL}} with your public API host, e.g. https://api.example.com/api/integrations/yeastar
+  Auth: Bearer token — paste the Integration API Key from System Configurations → Communication.
+  Docs: https://help.yeastar.com/en/p-series-cloud-edition/integrations/custom-crm-integration/custom-crm-integration-guide-overview.html
+-->
+<CRM Name="OMNICRM" MaxConcurrentRequest="5" CallJournal="1" EnableUserAssociation="1">
+  <Scenarios>
+    <Scenario Id="AuthMethod" Type="AUTH">
+      <Parameters>
+        <Parameter Name="CustomFieldList">
+          <Parameter Name="api_key" Title="OMNICRM Integration API Key" Type="PasswordInput"></Parameter>
+        </Parameter>
+        <Parameter Name="AuthMethod" Value="none"></Parameter>
+        <Parameter Name="PopulateTemplateString">
+          <Parameter Name="Authorization" Value="Bearer {{.api_key}}"></Parameter>
+          <Parameter Name="Accept" Value="application/json"></Parameter>
+        </Parameter>
+      </Parameters>
+    </Scenario>
+
+    <Scenario Id="UserAssociation" Type="REST">
+      <Parameters>
+        <Parameter Name="UserUniqueId" Value="users.#.id"></Parameter>
+        <Parameter Name="FirstName" Value="users.#.firstName"></Parameter>
+        <Parameter Name="LastName" Value="users.#.lastName"></Parameter>
+        <Parameter Name="Email" Value="users.#.email"></Parameter>
+      </Parameters>
+      <Requests>
+        <Request Name="UserAssociation" Method="GET" ResponseType="application/json" RequestEncoding="" URLFormat="{{API_BASE_URL}}/users">
+        </Request>
+      </Requests>
+    </Scenario>
+
+    <Scenario Id="ContactSync" Type="REST">
+      <Parameters>
+        <Parameter Name="ContactSyncTypeList">
+          <Parameter Name="Contacts" Value="1"></Parameter>
+        </Parameter>
+        <Parameter Name="ContactUrlType" Value="retrieve_from_contact"></Parameter>
+        <Parameter Name="ContactFieldForUri" Value="contacts.#.contactUrl"></Parameter>
+        <Parameter Name="ContactId" Value="contacts.#.id"></Parameter>
+        <Parameter Name="FirstName" Value="contacts.#.firstName"></Parameter>
+        <Parameter Name="LastName" Value="contacts.#.lastName"></Parameter>
+        <Parameter Name="Email" Value="contacts.#.email"></Parameter>
+        <Parameter Name="Phone" Value="contacts.#.phone"></Parameter>
+      </Parameters>
+      <Requests>
+        <Request Name="Contacts" Method="GET" ResponseType="application/json" RequestEncoding="" URLFormat="{{API_BASE_URL}}/contacts/search?phone={{.Phone}}">
+        </Request>
+      </Requests>
+    </Scenario>
+
+    <Scenario Id="CallJournal" Type="REST">
+      <Parameters>
+        <Parameter Name="EnableCallJournal" Value="1"></Parameter>
+        <Parameter Name="EnablePlayCallRecording" Value="1"></Parameter>
+        <Parameter Name="PlayCallRecording" Value="1"></Parameter>
+      </Parameters>
+      <Requests>
+        <Request Name="CallJournal" Method="POST" Weight="0" ResponseType="application/json" RequestEncoding="" URLFormat="{{API_BASE_URL}}/calls/journal">
+          <Parameters>
+            <Parameter Name="Data" Type="Body" Value="{&quot;callId&quot;:&quot;{{.CallId}}&quot;,&quot;direction&quot;:&quot;{{.Call_Type}}&quot;,&quot;extension&quot;:&quot;{{.Extension}}&quot;,&quot;phone&quot;:&quot;{{.Phone}}&quot;,&quot;Talk_Duration_Sec&quot;:&quot;{{.Talk_Duration_Sec}}&quot;,&quot;status&quot;:&quot;{{.Call_Log_Status}}&quot;,&quot;RecordPath&quot;:&quot;{{.RecordPath}}&quot;,&quot;ContactId&quot;:&quot;{{.ContactId}}&quot;}"></Parameter>
+          </Parameters>
+        </Request>
+      </Requests>
+    </Scenario>
+  </Scenarios>
+</CRM>

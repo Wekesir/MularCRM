@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CheckCircle,
   Headphones,
+  MapPin,
   Plus,
   RefreshCw,
   Pencil,
@@ -33,8 +34,9 @@ import {
   transferSupervisorToCenter,
   transferAgentToCenter,
 } from '../../api/callCenters';
+import { fetchRegions } from '../../api/regions';
 
-const EMPTY_FORM = { name: '', description: '', status: 'active' };
+const EMPTY_FORM = { name: '', description: '', status: 'active', regionId: '' };
 
 /** Searchable combobox for picking an assignable agent or supervisor */
 function StaffSearchSelect({ candidates, value, onChange, kind, disabled = false }) {
@@ -262,6 +264,7 @@ function CallCentersPage() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
+  const [regions, setRegions] = useState([]);
 
   // View staff
   const [staffOpen, setStaffOpen] = useState(false);
@@ -294,6 +297,12 @@ function CallCentersPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    fetchRegions({ includeInactive: false })
+      .then((rows) => setRegions(Array.isArray(rows) ? rows : []))
+      .catch(() => setRegions([]));
+  }, []);
+
   const openAdd = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
@@ -323,6 +332,9 @@ function CallCentersPage() {
         c.name.toLowerCase().includes(q) ||
         String(c.description || '')
           .toLowerCase()
+          .includes(q) ||
+        String(c.regionName || '')
+          .toLowerCase()
           .includes(q)
     );
   }, [centers, search]);
@@ -332,12 +344,17 @@ function CallCentersPage() {
       toast.error('Name is required');
       return;
     }
+    if (!form.regionId) {
+      toast.error('Region is required');
+      return;
+    }
     setIsSaving(true);
     try {
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
         status: form.status,
+        regionId: Number(form.regionId),
       };
       if (editing) {
         const updated = await updateCallCenter(editing.id, payload);
@@ -508,6 +525,10 @@ function CallCentersPage() {
                 <div className="cc-card-meta">
                   <p className="cc-card-name">{center.name}</p>
                   {center.description && <p className="cc-card-desc">{center.description}</p>}
+                  <p className="cc-card-desc">
+                    <MapPin className="icon-sm" aria-hidden="true" style={{ display: 'inline', verticalAlign: '-2px', marginRight: '0.25rem' }} />
+                    {center.regionName || 'No region'}
+                  </p>
                 </div>
                 <span
                   className={`status-pill ${
@@ -577,6 +598,7 @@ function CallCentersPage() {
                       name: center.name,
                       description: center.description || '',
                       status: center.status,
+                      regionId: center.regionId != null ? String(center.regionId) : '',
                     });
                     setModalOpen(true);
                   }}
@@ -639,6 +661,27 @@ function CallCentersPage() {
                   onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
                   placeholder="Optional brief description"
                 />
+              </div>
+              <div className="cf-field">
+                <span className="cf-label">Region *</span>
+                <select
+                  className="cf-input"
+                  value={form.regionId || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, regionId: e.target.value }))}
+                >
+                  <option value="">Select region…</option>
+                  {regions.map((region) => (
+                    <option key={region.id} value={region.id}>
+                      {region.name}
+                    </option>
+                  ))}
+                </select>
+                {editing?.regionId &&
+                  !regions.some((r) => String(r.id) === String(editing.regionId)) && (
+                    <p className="config-hint" style={{ marginTop: '0.35rem' }}>
+                      Previous region is inactive or missing. Choose an active region to save.
+                    </p>
+                  )}
               </div>
               <div className="cf-field">
                 <span className="cf-label">Status</span>

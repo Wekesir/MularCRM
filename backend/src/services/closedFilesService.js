@@ -1,5 +1,8 @@
 const pool = require('../db/pool');
-const { resolveCallCenterScope } = require('../config/orgRoles');
+const {
+  resolveCallCenterScope,
+  applyRegionDebtorSql,
+} = require('../config/orgRoles');
 
 function toNumber(value) {
   const n = Number(value);
@@ -53,6 +56,8 @@ function buildWhere(f = {}) {
     const scope = resolveCallCenterScope(f.user);
     if (scope.mode === 'none') {
       clauses.push('1=0');
+    } else if (scope.mode === 'region') {
+      applyRegionDebtorSql(clauses, params, scope.regionId, scope.callCenterId);
     } else if (scope.mode === 'center') {
       if (!scope.callCenterId) {
         clauses.push('1=0');

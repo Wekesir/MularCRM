@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Clock, Loader2, MessageSquare, RefreshCw, ShieldCheck } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LoadingButton from '../../components/LoadingButton';
 import { clearOtpChallenge, getOtpChallenge } from './LoginPage';
 import { resendOtp, verifyOtp, loadUserPermissions } from '../../store/slices/authSlice';
 import { useAppDispatch } from '../../store/hooks';
+import { safeNextPath } from '../../utils/safeNextPath';
 
 function VerifyOtpPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const nextPath = safeNextPath(searchParams.get('next'));
   const [code, setCode] = useState('');
   const [challenge, setChallenge] = useState(getOtpChallenge);
   const [submitting, setSubmitting] = useState(false);
@@ -18,9 +21,12 @@ function VerifyOtpPage() {
 
   useEffect(() => {
     if (!challenge?.challengeId) {
-      navigate('/login', { replace: true });
+      navigate(
+        nextPath ? `/login?next=${encodeURIComponent(nextPath)}` : '/login',
+        { replace: true }
+      );
     }
-  }, [challenge, navigate]);
+  }, [challenge, navigate, nextPath]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return undefined;
@@ -37,7 +43,7 @@ function VerifyOtpPage() {
       clearOtpChallenge();
       await dispatch(loadUserPermissions()).unwrap();
       toast.success('Signed in successfully');
-      navigate('/dashboard', { replace: true });
+      navigate(nextPath || '/dashboard', { replace: true });
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || 'Invalid verification code';
       toast.error(message);
@@ -143,7 +149,10 @@ function VerifyOtpPage() {
 
         <span className="otp-footer-divider" aria-hidden="true" />
 
-        <Link to="/login" className="otp-back-link">
+        <Link
+          to={nextPath ? `/login?next=${encodeURIComponent(nextPath)}` : '/login'}
+          className="otp-back-link"
+        >
           Back to sign in
         </Link>
       </div>

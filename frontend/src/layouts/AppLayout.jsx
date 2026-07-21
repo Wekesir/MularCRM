@@ -6,6 +6,7 @@ import PageLayout from '../layouts/PageLayout';
 import { PageHeaderStickyProvider, usePageHeaderSticky } from '../context/PageHeaderStickyContext';
 import { PageActionsProvider, usePageActions } from '../context/PageActionsContext';
 import { ConfirmProvider } from '../context/ConfirmContext';
+import IdleSessionGuard from '../components/IdleSessionGuard';
 import { getModuleMeta, pathToModuleKey } from '../routes/moduleMeta';
 import { getSidebarIcon } from '../routes/sidebarIcons';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
@@ -89,6 +90,7 @@ function AppLayout() {
     <PageHeaderStickyProvider>
       <PageActionsProvider>
         <ConfirmProvider>
+          <IdleSessionGuard />
           <AppLayoutContent />
         </ConfirmProvider>
       </PageActionsProvider>

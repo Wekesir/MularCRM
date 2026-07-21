@@ -24,9 +24,9 @@ const FILTER_TABS = [
 
 function ClientAgentsPage() {
   const { setActions } = usePageActions();
-  const { isSystemAdmin, isSeniorSupervisor } = usePermissions();
-  const canAssign = isSystemAdmin || isSeniorSupervisor;
-  const canReassign = isSystemAdmin || isSeniorSupervisor;
+  const { isSystemAdmin, isSeniorSupervisor, isRegionalManager } = usePermissions();
+  const canAssign = isSystemAdmin || isSeniorSupervisor || isRegionalManager;
+  const canReassign = isSystemAdmin || isSeniorSupervisor || isRegionalManager;
 
   const [clients, setClients] = useState([]);
   const [centers, setCenters] = useState([]);

@@ -51,6 +51,7 @@ import ContactAttemptPage from '../pages/reports/ContactAttemptPage';
 import CommissionRatesPage from '../pages/settings/CommissionRatesPage';
 import DebtTypePage from '../pages/settings/DebtTypePage';
 import DebtCategoryPage from '../pages/settings/DebtCategoryPage';
+import RegionsPage from '../pages/settings/RegionsPage';
 import ClientTypePage from '../pages/settings/ClientTypePage';
 import DebtorUploadRulesPage from '../pages/settings/DebtorUploadRulesPage';
 import CurrencyPage from '../pages/settings/CurrencyPage';
@@ -120,6 +121,7 @@ export const modules = [
   { path: '/settings/commission-rates', label: 'Commission Rates', component: CommissionRatesPage },
   { path: '/settings/debt-type', label: 'Debt Type', component: DebtTypePage },
   { path: '/settings/debt-category', label: 'Debt Category', component: DebtCategoryPage },
+  { path: '/settings/regions', label: 'Regions', component: RegionsPage },
   { path: '/settings/client-type', label: 'Client Type', component: ClientTypePage },
   { path: '/settings/debtor-upload-rules', label: 'Debtor Upload Rules', component: DebtorUploadRulesPage },
   { path: '/settings/currency', label: 'Currency', component: CurrencyPage },

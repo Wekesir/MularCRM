@@ -1,13 +1,15 @@
 import { useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { logoutRequest } from '../api/auth';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { changePassword as changePasswordThunk, logout as logoutAction, setUser } from '../store/slices/authSlice';
+import { loginPathWithNext } from '../utils/safeNextPath';
 
 export function useUser() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const user = useAppSelector((state) => state.auth.user);
 
   const updateProfile = useCallback(
@@ -49,16 +51,22 @@ export function useUser() {
     [dispatch]
   );
 
-  const logout = useCallback(async () => {
-    try {
-      await logoutRequest();
-    } catch {
-      /* ignore network errors on logout */
-    }
-    dispatch(logoutAction());
-    navigate('/login', { replace: true });
-    toast.info('Signed out');
-  }, [dispatch, navigate]);
+  const logout = useCallback(
+    async ({ preservePath = false } = {}) => {
+      try {
+        await logoutRequest();
+      } catch {
+        /* ignore network errors on logout */
+      }
+      dispatch(logoutAction());
+      const to = preservePath
+        ? loginPathWithNext(location.pathname, location.search)
+        : '/login';
+      navigate(to, { replace: true });
+      toast.info(preservePath ? 'Signed out due to inactivity' : 'Signed out');
+    },
+    [dispatch, navigate, location.pathname, location.search]
+  );
 
   return {
     user,

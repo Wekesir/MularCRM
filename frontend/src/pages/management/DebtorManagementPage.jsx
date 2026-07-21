@@ -45,11 +45,13 @@ import {
 } from '../../api/debtors';
 import { fetchClients } from '../../api/clients';
 import { fetchContactStatuses } from '../../api/contactStatuses';
+import { fetchRegions } from '../../api/regions';
 
 const PAGE_SIZE = 25;
 
 const EMPTY_ADV = {
   clientId: '',
+  regionId: '',
   agent: '',
   closed: '',
   lastContactedFrom: '',
@@ -221,6 +223,7 @@ function DebtorManagementPage() {
   const [buckets, setBuckets] = useState([]);
   const [agents, setAgents] = useState([]);
   const [clients, setClients] = useState([]);
+  const [regions, setRegions] = useState([]);
   const [contactStatuses, setContactStatuses] = useState([]);
   const [stats, setStats] = useState({ total: 0, loanAmount: 0, totalPaid: 0, outstanding: 0 });
 
@@ -235,10 +238,11 @@ function DebtorManagementPage() {
   const exportBtnRef = useRef(null);
   const sentinelRef = useRef(null);
   const reqId = useRef(0);
-  const { isSystemAdmin, isSeniorSupervisor, permissions } = usePermissions();
+  const { isSystemAdmin, isSeniorSupervisor, isRegionalManager, permissions } = usePermissions();
   const canBulkUpload =
     isSystemAdmin ||
     isSeniorSupervisor ||
+    isRegionalManager ||
     Boolean(permissions?.management?.debtor_management?.create);
 
   const collectionRate = stats.loanAmount > 0
@@ -269,8 +273,12 @@ function DebtorManagementPage() {
 
   // Load stable lookups once.
   useEffect(() => {
-    Promise.all([fetchClients(), fetchContactStatuses()])
-      .then(([c, cs]) => { setClients(c); setContactStatuses(cs); })
+    Promise.all([fetchClients(), fetchContactStatuses(), fetchRegions({ includeInactive: false })])
+      .then(([c, cs, regs]) => {
+        setClients(c);
+        setContactStatuses(cs);
+        setRegions(Array.isArray(regs) ? regs : []);
+      })
       .catch(() => {});
   }, []);
 
@@ -548,6 +556,14 @@ function DebtorManagementPage() {
                   <select className="af-select" value={advForm.clientId} onChange={(e) => setAdvForm((p) => ({ ...p, clientId: e.target.value }))}>
                     <option value="">All clients</option>
                     {clients.map((c) => (<option key={c.id} value={String(c.id)}>{c.name}</option>))}
+                  </select>
+                </div>
+
+                <div className="af-field">
+                  <span className="af-label">Region</span>
+                  <select className="af-select" value={advForm.regionId} onChange={(e) => setAdvForm((p) => ({ ...p, regionId: e.target.value }))}>
+                    <option value="">All regions</option>
+                    {regions.map((r) => (<option key={r.id} value={String(r.id)}>{r.name}</option>))}
                   </select>
                 </div>
 

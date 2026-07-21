@@ -1,45 +1,81 @@
 /**
- * Role-specific dashboards for Senior Supervisor and Call Center Supervisor.
+ * Role-specific dashboards for Senior Supervisor, Regional Manager, and Call Center Supervisor.
  */
 const pool = require('../db/pool');
 const {
   isSeniorSupervisorRole,
+  isRegionalManagerRole,
   isSupervisorRole,
   AGENT_ROLE_NAMES,
   SUPERVISOR_ROLE_NAMES,
 } = require('../config/orgRoles');
 const { getOrgDashboard } = require('./orgDashboardService');
 
-async function getSeniorSupervisorDashboard() {
+async function getSeniorSupervisorDashboard({ regionId = null } = {}) {
+  const regionFilter = regionId != null ? ' AND cc.region_id = ?' : '';
+  const regionParams = regionId != null ? [regionId] : [];
+  const centersInRegion = regionId != null
+    ? 'SELECT id FROM call_centers WHERE region_id = ? AND deleted_at IS NULL'
+    : null;
+
   const [[centers]] = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM call_centers WHERE deleted_at IS NULL AND status = 'active'`
+    `SELECT COUNT(*) AS cnt FROM call_centers cc
+     WHERE cc.deleted_at IS NULL AND cc.status = 'active'${regionFilter}`,
+    regionParams
   );
-  const [[unassignedClients]] = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM clients WHERE deleted_at IS NULL AND call_center_id IS NULL`
-  );
-  const [[assignedClients]] = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM clients WHERE deleted_at IS NULL AND call_center_id IS NOT NULL`
-  );
+
+  let unassignedClients = { cnt: 0 };
+  let assignedClients = { cnt: 0 };
+  if (regionId != null) {
+    // Unassigned clients are company-wide; regional managers only see assigned centers in-region.
+    const [[assigned]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM clients
+       WHERE deleted_at IS NULL AND call_center_id IN (${centersInRegion})`,
+      [regionId]
+    );
+    assignedClients = assigned;
+  } else {
+    const [[unassigned]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM clients WHERE deleted_at IS NULL AND call_center_id IS NULL`
+    );
+    const [[assigned]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM clients WHERE deleted_at IS NULL AND call_center_id IS NOT NULL`
+    );
+    unassignedClients = unassigned;
+    assignedClients = assigned;
+  }
+
+  const staffCenterClause = regionId != null
+    ? ` AND u.call_center_id IN (${centersInRegion})`
+    : '';
+  const staffParams = (extra) =>
+    regionId != null ? [...extra, regionId] : extra;
+
   const [[supervisors]] = await pool.query(
     `SELECT COUNT(*) AS cnt FROM users u
      JOIN roles r ON r.id = u.role_id
-     WHERE u.deleted_at IS NULL AND u.is_active = 1 AND r.name IN (?)`,
-    [SUPERVISOR_ROLE_NAMES]
+     WHERE u.deleted_at IS NULL AND u.is_active = 1 AND r.name IN (?)${staffCenterClause}`,
+    staffParams([SUPERVISOR_ROLE_NAMES])
   );
   const [[agents]] = await pool.query(
     `SELECT COUNT(*) AS cnt FROM users u
      JOIN roles r ON r.id = u.role_id
-     WHERE u.deleted_at IS NULL AND u.is_active = 1 AND r.name IN (?)`,
-    [AGENT_ROLE_NAMES]
-  );
-  const [[unboundAgents]] = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM users u
-     JOIN roles r ON r.id = u.role_id
-     WHERE u.deleted_at IS NULL AND r.name IN (?) AND u.call_center_id IS NULL`,
-    [AGENT_ROLE_NAMES]
+     WHERE u.deleted_at IS NULL AND u.is_active = 1 AND r.name IN (?)${staffCenterClause}`,
+    staffParams([AGENT_ROLE_NAMES])
   );
 
-  const [centerRows] = await pool.query(
+  let unboundAgents = { cnt: 0 };
+  if (regionId == null) {
+    const [[unbound]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM users u
+       JOIN roles r ON r.id = u.role_id
+       WHERE u.deleted_at IS NULL AND r.name IN (?) AND u.call_center_id IS NULL`,
+      [AGENT_ROLE_NAMES]
+    );
+    unboundAgents = unbound;
+  }
+
+  const [centerRowsFixed] = await pool.query(
     `SELECT cc.id, cc.name, cc.status,
             (SELECT COUNT(*) FROM clients c WHERE c.call_center_id = cc.id AND c.deleted_at IS NULL) AS client_count,
             (SELECT COUNT(*) FROM users u JOIN roles r ON r.id = u.role_id
@@ -47,22 +83,31 @@ async function getSeniorSupervisorDashboard() {
             (SELECT COUNT(*) FROM users u JOIN roles r ON r.id = u.role_id
               WHERE u.call_center_id = cc.id AND u.deleted_at IS NULL AND r.name IN (?)) AS agent_count
      FROM call_centers cc
-     WHERE cc.deleted_at IS NULL
+     WHERE cc.deleted_at IS NULL${regionFilter}
      ORDER BY cc.name ASC`,
-    [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES]
+    regionId != null
+      ? [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES, regionId]
+      : [SUPERVISOR_ROLE_NAMES, AGENT_ROLE_NAMES]
   );
+
+  const assignmentCenterClause = regionId != null
+    ? ` AND c.call_center_id IN (${centersInRegion})`
+    : ' AND c.call_center_id IS NOT NULL';
+  const assignmentParams = regionId != null ? [regionId] : [];
 
   const [recentAssignments] = await pool.query(
     `SELECT c.id, c.name, c.call_center_id, cc.name AS call_center_name, c.call_center_assigned_at
      FROM clients c
      LEFT JOIN call_centers cc ON cc.id = c.call_center_id
-     WHERE c.deleted_at IS NULL AND c.call_center_id IS NOT NULL
+     WHERE c.deleted_at IS NULL${assignmentCenterClause}
      ORDER BY c.call_center_assigned_at DESC
-     LIMIT 10`
+     LIMIT 10`,
+    assignmentParams
   );
 
   return {
-    variant: 'senior_supervisor',
+    variant: regionId != null ? 'regional_manager' : 'senior_supervisor',
+    regionId: regionId != null ? Number(regionId) : null,
     summary: {
       activeCallCenters: Number(centers?.cnt) || 0,
       unassignedClients: Number(unassignedClients?.cnt) || 0,
@@ -71,7 +116,7 @@ async function getSeniorSupervisorDashboard() {
       agents: Number(agents?.cnt) || 0,
       unboundAgents: Number(unboundAgents?.cnt) || 0,
     },
-    callCenters: centerRows.map((r) => ({
+    callCenters: centerRowsFixed.map((r) => ({
       id: r.id,
       name: r.name,
       status: r.status,
@@ -100,6 +145,7 @@ async function getSupervisorDashboard(user) {
         agents: 0,
         newBatches: 0,
         unassignedCases: 0,
+        assignedCases: 0,
         outstanding: 0,
         collected: 0,
       },
@@ -129,6 +175,7 @@ async function getSupervisorDashboard(user) {
   const [[portfolio]] = await pool.query(
     `SELECT
        COALESCE(SUM(CASE WHEN d.assigned_agent IS NULL OR d.assigned_agent = '' THEN 1 ELSE 0 END), 0) AS unassigned_cases,
+       COALESCE(SUM(CASE WHEN d.assigned_agent IS NOT NULL AND d.assigned_agent <> '' THEN 1 ELSE 0 END), 0) AS assigned_cases,
        COALESCE(SUM(d.outstanding_balance), 0) AS outstanding,
        COALESCE(SUM(d.total_paid), 0) AS collected
      FROM debtors d
@@ -184,6 +231,7 @@ async function getSupervisorDashboard(user) {
       agents: Number(agentCount?.cnt) || 0,
       newBatches: batchRows.length,
       unassignedCases: Number(portfolio?.unassigned_cases) || 0,
+      assignedCases: Number(portfolio?.assigned_cases) || 0,
       outstanding: Number(portfolio?.outstanding) || 0,
       collected: Number(portfolio?.collected) || 0,
     },
@@ -219,6 +267,32 @@ async function getDashboardForUser(user) {
     // Enrich admin view with call-center breakdown.
     const senior = await getSeniorSupervisorDashboard();
     return { ...org, variant: 'admin', callCenterOverview: senior };
+  }
+
+  if (isRegionalManagerRole(user)) {
+    const regionId = user.regionId != null ? Number(user.regionId) : null;
+    if (!regionId) {
+      return {
+        variant: 'regional_manager',
+        regionId: null,
+        summary: {
+          activeCallCenters: 0,
+          unassignedClients: 0,
+          assignedClients: 0,
+          supervisors: 0,
+          agents: 0,
+          unboundAgents: 0,
+        },
+        callCenters: [],
+        recentClientAssignments: [],
+        message: 'You are not bound to a region yet. Ask an administrator to assign you.',
+      };
+    }
+    const dash = await getSeniorSupervisorDashboard({ regionId });
+    return {
+      ...dash,
+      regionName: user.regionName || null,
+    };
   }
 
   if (isSeniorSupervisorRole(user)) {

@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, Fingerprint, Mail, Shield, UserRound } from 'lucide-react';
 import { toast } from 'react-toastify';
 import AuthFormField from '../../components/auth/AuthFormField';
 import LoadingButton from '../../components/LoadingButton';
 import { login, loginWithPasskey } from '../../store/slices/authSlice';
 import { useAppDispatch } from '../../store/hooks';
+import { safeNextPath } from '../../utils/safeNextPath';
 
 const OTP_SESSION_KEY = 'omnicrm-otp-challenge';
 
@@ -33,10 +34,16 @@ function browserSupportsPasskeys() {
 function LoginPage() {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const nextPath = safeNextPath(searchParams.get('next'));
   const [form, setForm] = useState({ email: '', password: '' });
   const [submitting, setSubmitting] = useState(false);
   const [passkeySubmitting, setPasskeySubmitting] = useState(false);
   const passkeysSupported = browserSupportsPasskeys();
+
+  const goAfterAuth = () => {
+    navigate(nextPath || '/dashboard', { replace: true });
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -48,7 +55,7 @@ function LoginPage() {
 
       if (result?.token) {
         clearOtpChallenge();
-        navigate('/dashboard', { replace: true });
+        goAfterAuth();
         return;
       }
 
@@ -57,7 +64,10 @@ function LoginPage() {
         maskedEmail: result.maskedEmail,
         smsSent: result.smsSent,
       });
-      navigate('/login/verify-otp');
+      const otpTo = nextPath
+        ? `/login/verify-otp?next=${encodeURIComponent(nextPath)}`
+        : '/login/verify-otp';
+      navigate(otpTo);
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || 'Sign in failed';
       toast.error(message);
@@ -82,7 +92,7 @@ function LoginPage() {
     try {
       await dispatch(loginWithPasskey({ email })).unwrap();
       clearOtpChallenge();
-      navigate('/dashboard', { replace: true });
+      goAfterAuth();
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || 'Passkey sign-in failed';
       toast.error(message);

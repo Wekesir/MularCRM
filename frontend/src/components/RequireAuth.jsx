@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, useSearchParams } from 'react-router-dom';
 import { useAppSelector } from '../store/hooks';
+import { loginPathWithNext, safeNextPath } from '../utils/safeNextPath';
 
 function isSessionValid(session) {
   if (!session.isAuthenticated || !session.token) return false;
@@ -15,8 +16,12 @@ function RequireAuth() {
   const valid = useMemo(() => isSessionValid(session), [session]);
 
   if (!valid) {
-    const next = encodeURIComponent(location.pathname + location.search);
-    return <Navigate to={`/login?next=${next}`} replace />;
+    return (
+      <Navigate
+        to={loginPathWithNext(location.pathname, location.search)}
+        replace
+      />
+    );
   }
 
   return <Outlet />;
@@ -24,10 +29,12 @@ function RequireAuth() {
 
 function GuestOnly() {
   const session = useAppSelector((state) => state.auth.session);
+  const [searchParams] = useSearchParams();
   const valid = useMemo(() => isSessionValid(session), [session]);
 
   if (valid) {
-    return <Navigate to="/dashboard" replace />;
+    const next = safeNextPath(searchParams.get('next'));
+    return <Navigate to={next || '/dashboard'} replace />;
   }
 
   return <Outlet />;

@@ -51,6 +51,8 @@ app.use('/api/closed-files', require('./routes/closedFiles'));
 app.use('/api/case-management', require('./routes/caseManagement'));
 app.use('/api/unassigned-files', require('./routes/unassignedFiles'));
 app.use('/api/debt-categories', require('./routes/debtCategories'));
+app.use('/api/regions', require('./routes/regions'));
+
 app.use('/api/debt-types', require('./routes/debtTypes'));
 app.use('/api/currencies', require('./routes/currencies'));
 app.use('/api/contact-statuses', require('./routes/contactStatuses'));
@@ -68,6 +70,7 @@ app.use('/api/client-commission-rates', require('./routes/clientCommissionRates'
 app.use('/api/backup', require('./routes/backup'));
 app.use('/api/live-payments', require('./routes/livePayments'));
 app.use('/api/webhooks/africastalking', require('./routes/africastalkingWebhooks'));
+app.use('/api/integrations/yeastar', require('./routes/yeastarIntegration'));
 
 async function start() {
   try {

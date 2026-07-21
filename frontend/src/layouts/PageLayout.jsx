@@ -1,16 +1,17 @@
 import { useEffect } from 'react';
 import ObservedPageHeader from '../components/ObservedPageHeader';
 import { useSystemConfig } from '../context/SystemConfigContext';
+import {
+  clearPageDocumentTitle,
+  setPageDocumentTitle,
+} from '../utils/documentTitle';
 
 function PageLayout({ title, description, icon, actions, subtitle, children }) {
   const { businessName } = useSystemConfig();
 
   useEffect(() => {
-    document.title = `${title} | ${businessName}`;
-
-    return () => {
-      document.title = businessName;
-    };
+    setPageDocumentTitle(title, businessName);
+    return () => clearPageDocumentTitle(businessName);
   }, [title, businessName]);
 
   return (

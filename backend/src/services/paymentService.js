@@ -1,6 +1,10 @@
 const pool = require('../db/pool');
 const commissionService = require('./commissionService');
 const { recordActivityEvent } = require('./activityService');
+const {
+  resolveCallCenterScope,
+  applyRegionDebtorSql,
+} = require('../config/orgRoles');
 
 function round2(value) {
   return Math.round((Number(value) || 0) * 100) / 100;
@@ -45,6 +49,7 @@ const PAYMENT_SELECT = `
   FROM payments p
   LEFT JOIN debtors d ON d.id = p.debtor_id
   LEFT JOIN clients c ON c.id = p.client_id
+  LEFT JOIN debtor_files df ON df.id = d.file_id
   LEFT JOIN debt_categories dc ON dc.id = p.debt_category_id
   LEFT JOIN currencies cur ON cur.id = p.currency_id
 `;
@@ -52,6 +57,21 @@ const PAYMENT_SELECT = `
 function buildWhere(f = {}) {
   const params = [];
   const clauses = [];
+
+  if (f.user) {
+    const scope = resolveCallCenterScope(f.user);
+    if (scope.mode === 'none') {
+      clauses.push('1=0');
+    } else if (scope.mode === 'region') {
+      applyRegionDebtorSql(clauses, params, scope.regionId, scope.callCenterId);
+    } else if (scope.mode === 'center') {
+      if (!scope.callCenterId) clauses.push('1=0');
+      else {
+        clauses.push('COALESCE(df.call_center_id, c.call_center_id) = ?');
+        params.push(scope.callCenterId);
+      }
+    }
+  }
 
   if (f.clientId != null && f.clientId !== '') {
     clauses.push('p.client_id = ?');

@@ -11,11 +11,35 @@ import {
 } from '../../api/users';
 import { fetchPermissionRegistry, fetchRoles } from '../../api/accessControl';
 import { fetchCallCenters } from '../../api/callCenters';
+import { fetchRegions } from '../../api/regions';
 import { usePageActions } from '../../context/PageActionsContext';
 import { useConfirm } from '../../context/ConfirmContext';
 import { usePermissions } from '../../hooks/usePermissions';
 
 const emptyCrud = { create: false, read: false, update: false, delete: false };
+
+const AGENT_ROLE_KEYS = new Set(['agent', 'internal agent', 'external agent']);
+const SUPERVISOR_ROLE_KEYS = new Set([
+  'supervisor',
+  'manager',
+  'call centre supervisor',
+  'external agent supervisor',
+]);
+
+function roleNeedsCallCenter(roleName) {
+  const key = String(roleName || '')
+    .trim()
+    .toLowerCase();
+  return AGENT_ROLE_KEYS.has(key) || SUPERVISOR_ROLE_KEYS.has(key);
+}
+
+function roleNeedsRegion(roleName) {
+  return (
+    String(roleName || '')
+      .trim()
+      .toLowerCase() === 'regional manager'
+  );
+}
 
 function buildEmptyPermissions(registry) {
   const permissions = {};
@@ -65,11 +89,14 @@ function UsersPage() {
     password: '',
     roleId: '',
     callCenterId: '',
+    regionId: '',
+    yeastarExtension: '',
     isActive: true,
     customizePermissions: false,
     permissionOverrides: null,
   });
   const [callCenters, setCallCenters] = useState([]);
+  const [regions, setRegions] = useState([]);
   const [loadingAction, setLoadingAction] = useState(null);
   const [usersRefreshKey, setUsersRefreshKey] = useState(0);
   const [deletedUsersRefreshKey, setDeletedUsersRefreshKey] = useState(0);
@@ -80,11 +107,17 @@ function UsersPage() {
   const isSavingUser = loadingAction === 'save-user';
 
   useEffect(() => {
-    Promise.all([fetchPermissionRegistry(), fetchRoles(), fetchCallCenters({ includeInactive: false })])
-      .then(([registryData, rolesData, centersData]) => {
+    Promise.all([
+      fetchPermissionRegistry(),
+      fetchRoles(),
+      fetchCallCenters({ includeInactive: false }),
+      fetchRegions({ includeInactive: false }),
+    ])
+      .then(([registryData, rolesData, centersData, regionsData]) => {
         setRegistry(registryData);
         setRoles(rolesData);
         setCallCenters(Array.isArray(centersData) ? centersData : []);
+        setRegions(Array.isArray(regionsData) ? regionsData : []);
       })
       .catch(() => toast.error('Failed to load user management data'));
   }, []);
@@ -107,6 +140,8 @@ function UsersPage() {
         password: '',
         roleId: user.roleId,
         callCenterId: user.callCenterId || '',
+        regionId: user.regionId || '',
+        yeastarExtension: user.yeastarExtension || '',
         isActive: user.isActive,
         customizePermissions: Boolean(user.permissionOverrides),
         permissionOverrides: user.permissionOverrides || buildEmptyPermissions(registry),
@@ -127,6 +162,8 @@ function UsersPage() {
       password: '',
       roleId: roles[0]?.id || '',
       callCenterId: '',
+      regionId: '',
+      yeastarExtension: '',
       isActive: true,
       customizePermissions: false,
       permissionOverrides: buildEmptyPermissions(registry),
@@ -173,13 +210,14 @@ function UsersPage() {
     }
 
     const selectedRole = roles.find((r) => r.id === Number(userForm.roleId));
-    const roleNeedsCenter = ['agent', 'supervisor', 'manager'].includes(
-      String(selectedRole?.name || '')
-        .trim()
-        .toLowerCase()
-    );
-    if (roleNeedsCenter && !userForm.callCenterId) {
+    const needsCenter = roleNeedsCallCenter(selectedRole?.name);
+    const needsRegion = roleNeedsRegion(selectedRole?.name);
+    if (needsCenter && !userForm.callCenterId) {
       toast.error('Call center is required for Agents and Supervisors');
+      return;
+    }
+    if (needsRegion && !userForm.regionId) {
+      toast.error('Region is required for Regional Managers');
       return;
     }
 
@@ -188,7 +226,9 @@ function UsersPage() {
       email: userForm.email,
       phone: userForm.phone.trim() || null,
       roleId: Number(userForm.roleId),
-      callCenterId: roleNeedsCenter ? Number(userForm.callCenterId) : null,
+      callCenterId: needsCenter ? Number(userForm.callCenterId) : null,
+      regionId: needsRegion ? Number(userForm.regionId) : null,
+      yeastarExtension: userForm.yeastarExtension?.trim() || null,
       isActive: userForm.isActive,
       permissionOverrides: userForm.customizePermissions ? userForm.permissionOverrides : null,
     };
@@ -496,6 +536,7 @@ function UsersPage() {
         setForm={setUserForm}
         roles={roles}
         callCenters={callCenters}
+        regions={regions}
         registry={registry}
         isSaving={isSavingUser}
         onSave={handleSaveUser}

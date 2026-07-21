@@ -40,18 +40,27 @@ function ClientManagementPage() {
   const { headerInView } = usePageHeaderSticky();
   const { confirm } = useConfirm();
   const { currencySymbol } = useSystemConfig();
-  const { isSystemAdmin, isSeniorSupervisor, isSupervisor, permissions } = usePermissions();
+  const {
+    isSystemAdmin,
+    isSeniorSupervisor,
+    isRegionalManager,
+    isSupervisor,
+    permissions,
+  } = usePermissions();
   const canCreateClient =
     isSystemAdmin ||
     isSeniorSupervisor ||
+    isRegionalManager ||
     Boolean(permissions?.management?.client_management?.create);
   const canUpdateClient =
     isSystemAdmin ||
     isSeniorSupervisor ||
+    isRegionalManager ||
     Boolean(permissions?.management?.client_management?.update);
   const canDeleteClient =
     isSystemAdmin ||
     isSeniorSupervisor ||
+    isRegionalManager ||
     Boolean(permissions?.management?.client_management?.delete);
   const canManageClients = canCreateClient || canUpdateClient || canDeleteClient;
   const isDocked = !headerInView;

@@ -3,9 +3,11 @@ const { isAgentRole } = require('./agentService');
 const {
   isSupervisorRole,
   isSeniorSupervisorRole,
+  isRegionalManagerRole,
   resolveCallCenterScope,
   SUPERVISOR_ROLE_NAMES,
   normalizeRoleName,
+  sqlCentersInRegion,
 } = require('../config/orgRoles');
 
 const REVIEWER_ROLE_NAMES = new Set([
@@ -160,6 +162,18 @@ function buildScopeFilters(filters = {}, viewer = null) {
       } else {
         clauses.push('u.call_center_id = ?');
         params.push(scope.callCenterId);
+      }
+    } else if (scope.mode === 'region') {
+      if (!scope.regionId) {
+        clauses.push('1=0');
+      } else if (scope.callCenterId) {
+        clauses.push('u.call_center_id = ?');
+        params.push(scope.callCenterId);
+        clauses.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+        params.push(scope.regionId);
+      } else {
+        clauses.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+        params.push(scope.regionId);
       }
     } else if (scope.mode === 'company' && scope.callCenterId) {
       clauses.push('u.call_center_id = ?');
@@ -481,15 +495,38 @@ async function getRestructureDetail(id, viewer) {
   }
   assertCanView(item, viewer);
 
-  // Center-scoped supervisors may only see agents in their center
-  if (viewer && isSupervisorRole(viewer) && !viewer.isSystemAdmin && !isSeniorSupervisorRole(viewer)) {
+  // Center/region-scoped viewers may only see agents in their scope
+  if (
+    viewer &&
+    !viewer.isSystemAdmin &&
+    !isSeniorSupervisorRole(viewer) &&
+    (isSupervisorRole(viewer) || isRegionalManagerRole(viewer))
+  ) {
     const scope = resolveCallCenterScope(viewer);
-    if (scope.callCenterId) {
-      const [rows] = await pool.query(
-        'SELECT call_center_id FROM users WHERE id = ? LIMIT 1',
-        [item.agentId]
+    const [rows] = await pool.query(
+      'SELECT call_center_id FROM users WHERE id = ? LIMIT 1',
+      [item.agentId]
+    );
+    const agentCenter = rows[0]?.call_center_id != null ? Number(rows[0].call_center_id) : null;
+    if (scope.mode === 'center' && scope.callCenterId) {
+      if (Number(agentCenter) !== Number(scope.callCenterId)) {
+        const err = new Error('Restructure not found');
+        err.code = 'NOT_FOUND';
+        err.status = 404;
+        throw err;
+      }
+    } else if (scope.mode === 'region') {
+      if (!scope.regionId || !agentCenter) {
+        const err = new Error('Restructure not found');
+        err.code = 'NOT_FOUND';
+        err.status = 404;
+        throw err;
+      }
+      const [centers] = await pool.query(
+        `SELECT id FROM call_centers WHERE id = ? AND region_id = ? AND deleted_at IS NULL LIMIT 1`,
+        [agentCenter, scope.regionId]
       );
-      if (Number(rows[0]?.call_center_id) !== Number(scope.callCenterId)) {
+      if (!centers[0]) {
         const err = new Error('Restructure not found');
         err.code = 'NOT_FOUND';
         err.status = 404;

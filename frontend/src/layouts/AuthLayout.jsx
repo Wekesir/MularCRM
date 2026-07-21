@@ -3,6 +3,11 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import AuthCopyright from '../components/auth/AuthCopyright';
 import AuthShowcase from '../components/auth/AuthShowcase';
 import { useSystemConfig } from '../context/SystemConfigContext';
+import {
+  clearPageDocumentTitle,
+  setPageDocumentTitle,
+  setUnreadDocumentTitleCount,
+} from '../utils/documentTitle';
 
 function getBusinessInitial(name) {
   const trimmed = (name || '').trim();
@@ -17,10 +22,9 @@ function AuthLayout() {
     && location.pathname !== '/login';
 
   useEffect(() => {
-    document.title = `Sign in | ${businessName}`;
-    return () => {
-      document.title = businessName;
-    };
+    setUnreadDocumentTitleCount(0);
+    setPageDocumentTitle('Sign in', businessName);
+    return () => clearPageDocumentTitle(businessName);
   }, [businessName]);
 
   const initial = getBusinessInitial(businessName);

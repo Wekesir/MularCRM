@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Briefcase,
   CalendarClock,
@@ -141,6 +142,7 @@ function ChannelChips({ item }) {
 function MyPortfolioPage() {
   const { setActions } = usePageActions();
   const { currencySymbol } = useSystemConfig();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [isLoading, setIsLoading] = useState(true);
   const [items, setItems] = useState([]);
@@ -325,6 +327,28 @@ function MyPortfolioPage() {
   };
 
   const openWorkspace = (item) => setWorkspaceDebtor(item);
+
+  // Yeastar call-popup deep link: /case-management/my-portfolio?openDebtor={id}
+  useEffect(() => {
+    const raw = searchParams.get('openDebtor');
+    if (!raw) return undefined;
+    const debtorId = Number(raw);
+    if (!Number.isFinite(debtorId)) return undefined;
+
+    const fromList = items.find((item) => Number(item.id) === debtorId);
+    if (fromList) {
+      setWorkspaceDebtor(fromList);
+    } else if (!isLoading) {
+      setWorkspaceDebtor({ id: debtorId, name: 'Debtor' });
+    } else {
+      return undefined;
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('openDebtor');
+    setSearchParams(next, { replace: true });
+    return undefined;
+  }, [searchParams, setSearchParams, items, isLoading]);
 
   const COLS = 7;
 

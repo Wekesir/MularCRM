@@ -159,6 +159,10 @@ export const moduleMeta = {
     title: 'Debt Category',
     description: 'Configure the debt categories used to group cases.',
   },
+  regions: {
+    title: 'Regions',
+    description: 'Configure geographic regions used to bind call centers.',
+  },
   client_type: {
     title: 'Client Type',
     description: 'Configure the client types used to classify accounts.',
@@ -272,6 +276,7 @@ export const pathToModuleKey = {
   '/settings/commission-rates': 'commission_rates',
   '/settings/debt-type': 'debt_type',
   '/settings/debt-category': 'debt_category',
+  '/settings/regions': 'regions',
   '/settings/client-type': 'client_type',
   '/settings/debtor-upload-rules': 'debtor_upload_rules',
   '/settings/currency': 'currency',
@@ -362,6 +367,7 @@ export const pathToPermission = {
   '/settings/commission-rates': { module: 'settings', sub: 'commission_rates' },
   '/settings/debt-type': { module: 'settings', sub: 'debt_type' },
   '/settings/debt-category': { module: 'settings', sub: 'debt_category' },
+  '/settings/regions': { module: 'settings', sub: 'regions' },
   '/settings/client-type': { module: 'settings', sub: 'client_type' },
   '/settings/debtor-upload-rules': { module: 'settings', sub: 'debtor_upload_rules' },
   '/settings/currency': { module: 'settings', sub: 'currency' },

@@ -39,6 +39,7 @@ import {
   showDateRangeFor,
 } from './reportFilterConfig';
 import ReportGatePanel from './ReportGatePanel';
+import ReportCharts from './ReportCharts';
 import { downloadReportExport, fetchReportData } from '../../api/reports';
 import { fetchClients } from '../../api/clients';
 import { fetchAgents } from '../../api/agents';
@@ -128,6 +129,11 @@ function ReportSkeleton() {
           <div key={i} className="rpt-skel rpt-skel-kpi" style={{ animationDelay: `${i * 80}ms` }} />
         ))}
       </div>
+      <div className="rpt-skel-row rpt-skel-row--charts">
+        {[0, 1].map((i) => (
+          <div key={i} className="rpt-skel rpt-skel-chart" style={{ animationDelay: `${320 + i * 80}ms` }} />
+        ))}
+      </div>
       <div className="rpt-skel rpt-skel-table" />
     </div>
   );
@@ -136,7 +142,13 @@ function ReportSkeleton() {
 function ReportShell({ slug, icon: Icon }) {
   const { currencySymbol } = useSystemConfig();
   const { setActions } = usePageActions();
-  const { isSystemAdmin, isSeniorSupervisor, isAgent, isSupervisor } = usePermissions();
+  const {
+    isSystemAdmin,
+    isSeniorSupervisor,
+    isRegionalManager,
+    isAgent,
+    isSupervisor,
+  } = usePermissions();
   const { gate, loading: gateLoading, unlocking, unlock } = useReportGate(slug);
   const reportUnlocks = useAppSelector((state) => state.auth.reportUnlocks) ?? {};
   const storedUnlock = reportUnlocks[slug];
@@ -145,7 +157,8 @@ function ReportShell({ slug, icon: Icon }) {
       ? storedUnlock.token
       : null;
 
-  const showCallCenter = Boolean(isSystemAdmin || isSeniorSupervisor) && !isAgent;
+  const showCallCenter =
+    Boolean(isSystemAdmin || isSeniorSupervisor || isRegionalManager) && !isAgent;
 
   const [filters, setFilters] = useState(() => defaultReportFilters(slug));
   const [applied, setApplied] = useState(() => defaultReportFilters(slug));
@@ -322,7 +335,11 @@ function ReportShell({ slug, icon: Icon }) {
                   Showing only your assigned cases and activity.
                 </p>
               )}
-              {isSupervisor && !isAgent && !isSystemAdmin && !isSeniorSupervisor && (
+              {isSupervisor &&
+                !isAgent &&
+                !isSystemAdmin &&
+                !isSeniorSupervisor &&
+                !isRegionalManager && (
                 <p className="rpt-agent-scope-note">
                   Showing data for your call center only.
                 </p>
@@ -358,6 +375,8 @@ function ReportShell({ slug, icon: Icon }) {
                   })}
                 </div>
               )}
+
+              <ReportCharts series={report?.series} />
 
               <div className="rpt-table-card">
                 <div className="rpt-table-toolbar">

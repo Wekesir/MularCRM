@@ -22,6 +22,7 @@ import { fetchClients } from '../../api/clients';
 import { fetchDebtCategories } from '../../api/debtCategories';
 import { fetchDebtTypes } from '../../api/debtTypes';
 import { fetchCurrencies } from '../../api/currencies';
+import { fetchRegions } from '../../api/regions';
 import {
   fetchLivePaymentsStatus,
   pullLivePayments,
@@ -30,53 +31,15 @@ import {
 import { useSystemConfig } from '../../context/SystemConfigContext';
 
 const FREQUENCY_OPTIONS = [
-  {
-    value: 'every_1_min',
-    label: '1 min',
-    hint: 'Near real-time',
-    scheduleLabel: 'Every 1 minute',
-    icon: Zap,
-  },
-  {
-    value: 'every_5_min',
-    label: '5 min',
-    hint: 'Every 5 minutes',
-    scheduleLabel: 'Every 5 minutes',
-    icon: Timer,
-  },
-  {
-    value: 'every_15_min',
-    label: '15 min',
-    hint: 'Every 15 minutes',
-    scheduleLabel: 'Every 15 minutes',
-    icon: Timer,
-  },
-  {
-    value: 'every_30_min',
-    label: '30 min',
-    hint: 'Every 30 minutes',
-    scheduleLabel: 'Every 30 minutes',
-    icon: Clock,
-  },
-  {
-    value: 'hourly',
-    label: 'Hourly',
-    hint: 'Top of each hour',
-    scheduleLabel: 'Hourly',
-    icon: Clock,
-  },
-  {
-    value: 'daily',
-    label: 'Daily',
-    hint: 'Once at 06:00',
-    scheduleLabel: 'Daily at 06:00',
-    icon: CalendarClock,
-  },
+  { value: 'every_1_min', label: '1 min', hint: 'Near real-time', scheduleLabel: 'Every 1 minute', icon: Zap },
+  { value: 'every_5_min', label: '5 min', hint: 'Every 5 minutes', scheduleLabel: 'Every 5 minutes', icon: Timer },
+  { value: 'every_15_min', label: '15 min', hint: 'Every 15 minutes', scheduleLabel: 'Every 15 minutes', icon: Timer },
+  { value: 'every_30_min', label: '30 min', hint: 'Every 30 minutes', scheduleLabel: 'Every 30 minutes', icon: Clock },
+  { value: 'hourly', label: 'Hourly', hint: 'Top of each hour', scheduleLabel: 'Hourly', icon: Clock },
+  { value: 'daily', label: 'Daily', hint: 'Once at 06:00', scheduleLabel: 'Daily at 06:00', icon: CalendarClock },
 ];
 
-const FREQUENCY_LABELS = Object.fromEntries(
-  FREQUENCY_OPTIONS.map((o) => [o.value, o.scheduleLabel])
-);
+const FREQUENCY_LABELS = Object.fromEntries(FREQUENCY_OPTIONS.map((o) => [o.value, o.scheduleLabel]));
 
 const EMPTY_CLIENT = {
   clientId: '',
@@ -88,16 +51,25 @@ const EMPTY_CLIENT = {
   debtCategoryId: '',
   debtTypeId: '',
   currencyId: '',
+  regionId: '',
   timeoutMs: 30000,
 };
 
-const EMPTY_LIVE = {
-  enabled: false,
-  frequency: 'daily',
-  clients: [],
-};
+function mapLiveClient(c) {
+  return {
+    ...EMPTY_CLIENT,
+    ...c,
+    clientId: c.clientId != null ? String(c.clientId) : '',
+    debtCategoryId: c.debtCategoryId != null ? String(c.debtCategoryId) : '',
+    debtTypeId: c.debtTypeId != null ? String(c.debtTypeId) : '',
+    currencyId: c.currencyId != null ? String(c.currencyId) : '',
+    regionId: c.regionId != null ? String(c.regionId) : '',
+    apiKey: '',
+  };
+}
 
-/** Same snake_case keys as the debtor CSV template. */
+const EMPTY_LIVE = { enabled: false, frequency: 'daily', clients: [] };
+
 const ALL_JSON_FIELDS = [
   { key: 'full_name', required: true, example: 'Jane Mwangi' },
   { key: 'phone_number', required: true, example: '254710595755' },
@@ -139,21 +111,22 @@ const EXPECTED_JSON_SAMPLE = `{
   "date": "2026-07-10",
   "debtors": [
     {
-${ALL_JSON_FIELDS.map(
-  (f) =>
-    `      "${f.key}": "${f.example}"${f.required ? '  // compulsory' : '  // optional'}`
-).join(',\n')}
+${ALL_JSON_FIELDS.map((f) => `      "${f.key}": "${f.example}"${f.required ? '  // compulsory' : '  // optional'}`).join(',\n')}
     }
   ]
 }`;
 
+const TABS = [
+  { id: 'status', label: 'Status', Icon: CloudDownload, color: '#2563eb', colorMuted: 'color-mix(in srgb, #2563eb 10%, transparent)', borderColor: 'color-mix(in srgb, #2563eb 28%, transparent)' },
+  { id: 'schedule', label: 'Schedule', Icon: CalendarClock, color: '#7c3aed', colorMuted: 'color-mix(in srgb, #7c3aed 10%, transparent)', borderColor: 'color-mix(in srgb, #7c3aed 28%, transparent)' },
+  { id: 'endpoints', label: 'Endpoints', Icon: Link2, color: '#059669', colorMuted: 'color-mix(in srgb, #059669 10%, transparent)', borderColor: 'color-mix(in srgb, #059669 28%, transparent)' },
+  { id: 'reference', label: 'API Reference', Icon: Braces, color: '#ea580c', colorMuted: 'color-mix(in srgb, #ea580c 10%, transparent)', borderColor: 'color-mix(in srgb, #ea580c 28%, transparent)' },
+];
+
 function formatWhen(value) {
   if (!value) return '—';
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: 'medium',
-      timeStyle: 'short',
-    }).format(new Date(value));
+    return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
   } catch {
     return String(value);
   }
@@ -161,20 +134,17 @@ function formatWhen(value) {
 
 function todayLocal() {
   const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function ClientAvatar({ name }) {
-  const letter = (name || '?')[0].toUpperCase();
-  return <span className="lp-client-avatar">{letter}</span>;
+  return <span className="lp-client-avatar">{(name || '?')[0].toUpperCase()}</span>;
 }
 
 function Integrations() {
   const { loadConfig, updateConfig } = useSystemConfig();
   const [form, setForm] = useState(EMPTY_LIVE);
+  const [activeTab, setActiveTab] = useState('status');
   const [saving, setSaving] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [testingId, setTestingId] = useState(null);
@@ -187,16 +157,14 @@ function Integrations() {
   const [categories, setCategories] = useState([]);
   const [debtTypes, setDebtTypes] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [regions, setRegions] = useState([]);
 
   const refreshStatus = useCallback(async (silent = false) => {
     if (!silent) setStatusLoading(true);
     try {
-      const data = await fetchLivePaymentsStatus();
-      setStatus(data);
+      setStatus(await fetchLivePaymentsStatus());
     } catch (error) {
-      if (!silent) {
-        toast.error(error.response?.data?.message || 'Failed to load live payments status');
-      }
+      if (!silent) toast.error(error.response?.data?.message || 'Failed to load live payments status');
     } finally {
       setStatusLoading(false);
     }
@@ -210,17 +178,7 @@ function Integrations() {
           ...EMPTY_LIVE,
           ...live,
           frequency: FREQUENCY_LABELS[live.frequency] ? live.frequency : 'daily',
-          clients: Array.isArray(live.clients)
-            ? live.clients.map((c) => ({
-                ...EMPTY_CLIENT,
-                ...c,
-                clientId: c.clientId != null ? String(c.clientId) : '',
-                debtCategoryId: c.debtCategoryId != null ? String(c.debtCategoryId) : '',
-                debtTypeId: c.debtTypeId != null ? String(c.debtTypeId) : '',
-                currencyId: c.currencyId != null ? String(c.currencyId) : '',
-                apiKey: '',
-              }))
-            : [],
+          clients: Array.isArray(live.clients) ? live.clients.map(mapLiveClient) : [],
         });
       })
       .catch(() => toast.error('Failed to load configuration'));
@@ -230,40 +188,27 @@ function Integrations() {
       fetchDebtCategories().catch(() => []),
       fetchDebtTypes().catch(() => []),
       fetchCurrencies().catch(() => []),
-    ]).then(([c, cats, types, curs]) => {
+      fetchRegions({ includeInactive: false }).catch(() => []),
+    ]).then(([c, cats, types, curs, regs]) => {
       setClients(Array.isArray(c) ? c : c?.clients || []);
       setCategories(Array.isArray(cats) ? cats : []);
       setDebtTypes(Array.isArray(types) ? types : []);
       setCurrencies(Array.isArray(curs) ? curs : []);
+      setRegions(Array.isArray(regs) ? regs : []);
     });
 
     refreshStatus();
   }, [loadConfig, refreshStatus]);
 
-  const updateClientEntry = (index, patch) => {
-    setForm((prev) => {
-      const list = [...prev.clients];
-      list[index] = { ...list[index], ...patch };
-      return { ...prev, clients: list };
-    });
-  };
+  const updateClientEntry = (index, patch) =>
+    setForm((prev) => { const list = [...prev.clients]; list[index] = { ...list[index], ...patch }; return { ...prev, clients: list }; });
 
-  const addClient = () => {
-    setForm((prev) => ({
-      ...prev,
-      clients: [...prev.clients, { ...EMPTY_CLIENT }],
-    }));
-  };
+  const addClient = () => setForm((prev) => ({ ...prev, clients: [...prev.clients, { ...EMPTY_CLIENT }] }));
 
-  const removeClient = (index) => {
-    setForm((prev) => ({
-      ...prev,
-      clients: prev.clients.filter((_, i) => i !== index),
-    }));
-  };
+  const removeClient = (index) => setForm((prev) => ({ ...prev, clients: prev.clients.filter((_, i) => i !== index) }));
 
-  const handleSave = async (event) => {
-    event.preventDefault();
+  const handleSave = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
     setSaving(true);
     try {
       const payload = {
@@ -280,6 +225,7 @@ function Integrations() {
               debtCategoryId: c.debtCategoryId ? Number(c.debtCategoryId) : null,
               debtTypeId: c.debtTypeId ? Number(c.debtTypeId) : null,
               currencyId: c.currencyId ? Number(c.currencyId) : null,
+              regionId: c.regionId ? Number(c.regionId) : null,
               timeoutMs: Number(c.timeoutMs) || 30000,
             })),
           },
@@ -291,17 +237,7 @@ function Integrations() {
         ...EMPTY_LIVE,
         ...live,
         frequency: FREQUENCY_LABELS[live.frequency] ? live.frequency : 'daily',
-        clients: Array.isArray(live.clients)
-          ? live.clients.map((c) => ({
-              ...EMPTY_CLIENT,
-              ...c,
-              clientId: c.clientId != null ? String(c.clientId) : '',
-              debtCategoryId: c.debtCategoryId != null ? String(c.debtCategoryId) : '',
-              debtTypeId: c.debtTypeId != null ? String(c.debtTypeId) : '',
-              currencyId: c.currencyId != null ? String(c.currencyId) : '',
-              apiKey: '',
-            }))
-          : [],
+        clients: Array.isArray(live.clients) ? live.clients.map(mapLiveClient) : [],
       });
       toast.success('Live payments settings saved');
       await refreshStatus(true);
@@ -315,10 +251,7 @@ function Integrations() {
   const handlePull = async () => {
     setPulling(true);
     try {
-      const result = await pullLivePayments({
-        clientId: pullClientId || null,
-        date: pullDate || null,
-      });
+      const result = await pullLivePayments({ clientId: pullClientId || null, date: pullDate || null });
       toast.success(result.message || 'Pull completed');
       await refreshStatus(true);
     } catch (error) {
@@ -331,19 +264,10 @@ function Integrations() {
 
   const handleTest = async (index) => {
     const entry = form.clients[index];
-    if (!entry?.endpointUrl && !entry?.clientId) {
-      toast.error('Set an endpoint URL (and save) before testing');
-      return;
-    }
+    if (!entry?.endpointUrl && !entry?.clientId) { toast.error('Set an endpoint URL (and save) before testing'); return; }
     setTestingId(index);
     try {
-      const result = await testLivePaymentsConnection({
-        clientId: entry.clientId ? Number(entry.clientId) : null,
-        endpointUrl: entry.endpointUrl || undefined,
-        apiKey: entry.apiKey || undefined,
-        authHeader: entry.authHeader || 'Authorization',
-        timeoutMs: entry.timeoutMs,
-      });
+      const result = await testLivePaymentsConnection({ clientId: entry.clientId ? Number(entry.clientId) : null, endpointUrl: entry.endpointUrl || undefined, apiKey: entry.apiKey || undefined, authHeader: entry.authHeader || 'Authorization', timeoutMs: entry.timeoutMs });
       toast.success(result.message || 'Connection OK');
     } catch (error) {
       toast.error(error.response?.data?.message || 'Connection test failed');
@@ -352,554 +276,492 @@ function Integrations() {
     }
   };
 
+  // ── Warning indicators ────────────────────────────────────────────────────
+  const scheduleNeedsAction = !form.enabled;
+  const endpointsNeedsAction = form.clients.length === 0
+    || form.clients.some((c) => !c.clientId || !c.endpointUrl || !c.regionId);
+
+  function tabNeedsAction(id) {
+    if (id === 'schedule') return scheduleNeedsAction;
+    if (id === 'endpoints') return endpointsNeedsAction;
+    return false;
+  }
+
   const lastRun = status?.lastRun;
   const cron = status?.cron;
 
-  function StatusBadge() {
-    if (lastRun?.running)
-      return (
-        <span className="bk-badge bk-badge--running">
-          <Loader2 className="icon-sm bk-spin" aria-hidden="true" />
-          Running
-        </span>
-      );
-    if (lastRun?.ok === true)
-      return (
-        <span className="bk-badge bk-badge--success">
-          <CheckCircle2 className="icon-sm" aria-hidden="true" />
-          Success
-        </span>
-      );
-    if (lastRun?.ok === false)
-      return (
-        <span className="bk-badge bk-badge--failed">
-          <AlertCircle className="icon-sm" aria-hidden="true" />
-          Failed
-        </span>
-      );
-    return <span className="bk-badge bk-badge--idle">No pulls yet</span>;
-  }
+  const statusBadgeContent = lastRun?.running
+    ? { cls: 'bk-badge--running', Icon: Loader2, spin: true, text: 'Running' }
+    : lastRun?.ok === true
+      ? { cls: 'bk-badge--success', Icon: CheckCircle2, spin: false, text: 'Success' }
+      : lastRun?.ok === false
+        ? { cls: 'bk-badge--failed', Icon: AlertCircle, spin: false, text: 'Failed' }
+        : { cls: 'bk-badge--idle', Icon: null, spin: false, text: 'No pulls yet' };
+
+  const needsSave = activeTab === 'schedule' || activeTab === 'endpoints';
 
   return (
-    <div className="space-y-6 min-h-[50vh]">
-      {/* ── Status card ─────────────────────────────────── */}
-      <div className="bk-status-card">
-        <div className="bk-status-card-body">
-          <div className="bk-status-card-top">
-            <div className="bk-status-card-left">
-              <span className="bk-status-card-icon">
-                <CloudDownload className="icon-md" aria-hidden="true" />
-              </span>
-              <div>
-                <div className="bk-status-card-title-row">
-                  <p className="bk-status-card-title">Live Payments API</p>
-                  <StatusBadge />
-                </div>
-                <p className="bk-status-card-desc">
-                  {statusLoading
-                    ? 'Loading…'
-                    : lastRun?.message || 'Poll lender APIs instead of daily CSV uploads'}
-                </p>
-              </div>
-            </div>
+    <form className="intg-tabs-root" onSubmit={handleSave}>
+      {/* ── Tab bar ── */}
+      <nav className="comm-tab-bar" role="tablist" aria-label="Integration configuration">
+        {TABS.map((tab) => {
+          const isActive = tab.id === activeTab;
+          const warn = tabNeedsAction(tab.id);
+          return (
             <button
+              key={tab.id}
+              role="tab"
               type="button"
-              className="btn-icon-outline"
-              aria-label="Refresh status"
-              onClick={() => refreshStatus()}
-              disabled={statusLoading}
+              aria-selected={isActive}
+              aria-controls={`intg-panel-${tab.id}`}
+              className={`comm-tab${isActive ? ' comm-tab--active' : ''}${warn ? ' comm-tab--warn' : ''}`}
+              style={isActive ? { '--tab-color': tab.color, '--tab-color-muted': tab.colorMuted, '--tab-border': tab.borderColor } : {}}
+              onClick={() => setActiveTab(tab.id)}
             >
-              <RefreshCw
-                className={`icon-sm${statusLoading ? ' bk-spin' : ''}`}
-                aria-hidden="true"
-              />
+              <span className="comm-tab-icon-wrap" style={isActive ? { background: tab.colorMuted, color: tab.color, borderColor: tab.borderColor } : {}}>
+                <tab.Icon className="comm-tab-icon" aria-hidden="true" />
+              </span>
+              <span className="comm-tab-label">{tab.label}</span>
+              {warn && <span className="comm-tab-warn-dot" aria-label="Needs attention">!</span>}
             </button>
-          </div>
+          );
+        })}
+      </nav>
 
-          {/* Stat tiles */}
-          <div className="bk-stat-tiles">
-            <div className="bk-stat-tile">
-              <span className="bk-stat-tile-icon">
-                <Clock className="icon-sm" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="bk-stat-tile-value">{formatWhen(lastRun?.startedAt)}</p>
-                <p className="bk-stat-tile-label">Started</p>
+      {/* ── Tab panels ── */}
+      <div className="comm-tab-content">
+
+        {/* Status */}
+        {activeTab === 'status' && (
+          <div id="intg-panel-status" role="tabpanel" className="comm-panel">
+            <div className="comm-panel-header" style={{ '--panel-color': '#2563eb', '--panel-color-muted': 'color-mix(in srgb, #2563eb 10%, var(--bg-surface))' }}>
+              <div className="comm-panel-icon" style={{ background: 'color-mix(in srgb, #2563eb 14%, transparent)', color: '#2563eb', borderColor: 'color-mix(in srgb, #2563eb 28%, transparent)' }}>
+                <CloudDownload className="comm-panel-icon-svg" aria-hidden="true" />
               </div>
-            </div>
-            <div className="bk-stat-tile">
-              <span className="bk-stat-tile-icon">
-                <CheckCircle2 className="icon-sm" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="bk-stat-tile-value">{formatWhen(lastRun?.finishedAt)}</p>
-                <p className="bk-stat-tile-label">Finished</p>
-              </div>
-            </div>
-            <div className="bk-stat-tile">
-              <span className="bk-stat-tile-icon">
-                <CalendarClock className="icon-sm" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="bk-stat-tile-value">
-                  {cron?.scheduled
-                    ? `${FREQUENCY_LABELS[cron.frequency] || cron.label || cron.frequency} · ${cron.timezone}`
-                    : 'Not scheduled'}
+              <div className="comm-panel-header-text">
+                <div className="comm-panel-title-row">
+                  <h3 className="comm-panel-title">Live Payments API</h3>
+                  <span className={`bk-badge ${statusBadgeContent.cls}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                    {statusBadgeContent.Icon && (
+                      <statusBadgeContent.Icon className={`icon-sm${statusBadgeContent.spin ? ' bk-spin' : ''}`} aria-hidden="true" />
+                    )}
+                    {statusBadgeContent.text}
+                  </span>
+                </div>
+                <p className="comm-panel-desc">
+                  {statusLoading ? 'Loading…' : lastRun?.message || 'Poll lender APIs instead of daily CSV uploads — payments sync automatically on schedule.'}
                 </p>
-                <p className="bk-stat-tile-label">Schedule</p>
               </div>
+              <button type="button" className="btn-icon-outline" aria-label="Refresh status" onClick={() => refreshStatus()} disabled={statusLoading}>
+                <RefreshCw className={`icon-sm${statusLoading ? ' bk-spin' : ''}`} aria-hidden="true" />
+              </button>
             </div>
-            <div className="bk-stat-tile">
-              <span className="bk-stat-tile-icon">
-                <Zap className="icon-sm" aria-hidden="true" />
-              </span>
-              <div>
-                <p className="bk-stat-tile-value">{lastRun?.triggeredBy || '—'}</p>
-                <p className="bk-stat-tile-label">Triggered by</p>
+
+            <div className="comm-panel-body" style={{ gap: '1.25rem' }}>
+              {/* Stat tiles */}
+              <div className="intg-stat-tiles">
+                <div className="intg-stat-tile">
+                  <span className="intg-stat-tile-icon" style={{ background: 'color-mix(in srgb, #2563eb 12%, transparent)', color: '#2563eb' }}>
+                    <Clock className="icon-sm" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <p className="intg-stat-tile-value">{formatWhen(lastRun?.startedAt)}</p>
+                    <p className="intg-stat-tile-label">Last started</p>
+                  </div>
+                </div>
+                <div className="intg-stat-tile">
+                  <span className="intg-stat-tile-icon" style={{ background: 'color-mix(in srgb, #059669 12%, transparent)', color: '#059669' }}>
+                    <CheckCircle2 className="icon-sm" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <p className="intg-stat-tile-value">{formatWhen(lastRun?.finishedAt)}</p>
+                    <p className="intg-stat-tile-label">Last finished</p>
+                  </div>
+                </div>
+                <div className="intg-stat-tile">
+                  <span className="intg-stat-tile-icon" style={{ background: 'color-mix(in srgb, #7c3aed 12%, transparent)', color: '#7c3aed' }}>
+                    <CalendarClock className="icon-sm" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <p className="intg-stat-tile-value">
+                      {cron?.scheduled
+                        ? `${FREQUENCY_LABELS[cron.frequency] || cron.label || cron.frequency}`
+                        : 'Not scheduled'}
+                    </p>
+                    <p className="intg-stat-tile-label">
+                      {cron?.scheduled ? `Timezone: ${cron.timezone}` : 'Enable in Schedule tab'}
+                    </p>
+                  </div>
+                </div>
+                <div className="intg-stat-tile">
+                  <span className="intg-stat-tile-icon" style={{ background: 'color-mix(in srgb, #ea580c 12%, transparent)', color: '#ea580c' }}>
+                    <Zap className="icon-sm" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <p className="intg-stat-tile-value">{lastRun?.triggeredBy || '—'}</p>
+                    <p className="intg-stat-tile-label">Triggered by</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Manual pull */}
+              <div className="intg-pull-card">
+                <div className="intg-pull-card-header">
+                  <CloudDownload className="intg-pull-card-icon" aria-hidden="true" />
+                  <div>
+                    <p className="intg-pull-card-title">Manual pull</p>
+                    <p className="intg-pull-card-desc">Trigger an immediate sync for a specific date without waiting for the scheduled run.</p>
+                  </div>
+                </div>
+                <div className="lp-pull-row">
+                  <label className="bk-field lp-pull-date">
+                    <span className="bk-field-label">Pull date</span>
+                    <input type="date" value={pullDate} onChange={(e) => setPullDate(e.target.value)} />
+                  </label>
+                  <label className="bk-field lp-pull-client">
+                    <span className="bk-field-label">Client (optional)</span>
+                    <select value={pullClientId} onChange={(e) => setPullClientId(e.target.value)}>
+                      <option value="">All enabled clients</option>
+                      {form.clients.filter((c) => c.clientId).map((c) => {
+                        const name = clients.find((x) => String(x.id) === String(c.clientId))?.name || `Client #${c.clientId}`;
+                        return <option key={c.clientId} value={c.clientId}>{name}</option>;
+                      })}
+                    </select>
+                  </label>
+                  <LoadingButton type="button" className="btn-primary btn-sm lp-pull-btn" loading={pulling} loadingText="Pulling…" onClick={handlePull}>
+                    <CloudDownload className="icon-sm" aria-hidden="true" />
+                    Pull now
+                  </LoadingButton>
+                </div>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Manual pull row */}
-          <div className="lp-pull-row">
-            <label className="bk-field lp-pull-date">
-              <span className="bk-field-label">Pull date</span>
-              <input
-                type="date"
-                value={pullDate}
-                onChange={(e) => setPullDate(e.target.value)}
-              />
-            </label>
-            <label className="bk-field lp-pull-client">
-              <span className="bk-field-label">Client (optional)</span>
-              <select value={pullClientId} onChange={(e) => setPullClientId(e.target.value)}>
-                <option value="">All enabled clients</option>
-                {form.clients
-                  .filter((c) => c.clientId)
-                  .map((c) => {
-                    const name =
-                      clients.find((x) => String(x.id) === String(c.clientId))?.name ||
-                      `Client #${c.clientId}`;
+        {/* Schedule */}
+        {activeTab === 'schedule' && (
+          <div id="intg-panel-schedule" role="tabpanel" className="comm-panel">
+            <div className="comm-panel-header" style={{ '--panel-color': '#7c3aed', '--panel-color-muted': 'color-mix(in srgb, #7c3aed 10%, var(--bg-surface))' }}>
+              <div className="comm-panel-icon" style={{ background: 'color-mix(in srgb, #7c3aed 14%, transparent)', color: '#7c3aed', borderColor: 'color-mix(in srgb, #7c3aed 28%, transparent)' }}>
+                <CalendarClock className="comm-panel-icon-svg" aria-hidden="true" />
+              </div>
+              <div className="comm-panel-header-text">
+                <div className="comm-panel-title-row">
+                  <h3 className="comm-panel-title">Schedule</h3>
+                  {scheduleNeedsAction ? (
+                    <span className="comm-panel-badge comm-panel-badge--warn">Disabled</span>
+                  ) : (
+                    <span className="comm-panel-badge" style={{ background: 'color-mix(in srgb, #7c3aed 12%, transparent)', color: '#7c3aed', borderColor: 'color-mix(in srgb, #7c3aed 28%, transparent)' }}>
+                      {FREQUENCY_LABELS[form.frequency] || form.frequency}
+                    </span>
+                  )}
+                </div>
+                <p className="comm-panel-desc">
+                  When enabled, the backend automatically polls each endpoint on the chosen schedule. Shorter
+                  intervals let agents see new payments sooner — closer to real-time.
+                </p>
+              </div>
+            </div>
+
+            <div className="comm-panel-body config-form">
+              {/* Enable toggle */}
+              <div className="bk-enable-row">
+                <div className="bk-enable-row-text">
+                  <p className="bk-enable-row-label">Enable automatic pulls</p>
+                  <p className="bk-enable-row-hint">
+                    The backend POSTs <code>{'{ "date": "YYYY-MM-DD" }'}</code> to each enabled client
+                    endpoint on the schedule below ({cron?.timezone || 'Africa/Nairobi'}).
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={Boolean(form.enabled)}
+                  className={`bk-toggle${form.enabled ? ' bk-toggle--on' : ''}`}
+                  onClick={() => setForm((prev) => ({ ...prev, enabled: !prev.enabled }))}
+                >
+                  <span className="bk-toggle-thumb" />
+                  <span className="sr-only">{form.enabled ? 'Disable' : 'Enable'} automatic pulls</span>
+                </button>
+              </div>
+
+              {/* Frequency picker */}
+              <div className="lp-freq-block">
+                <p className="bk-freq-label">Poll frequency</p>
+                <div className="lp-freq-grid">
+                  {FREQUENCY_OPTIONS.map((opt) => {
+                    const Icon = opt.icon;
+                    const selected = form.frequency === opt.value;
                     return (
-                      <option key={c.clientId} value={c.clientId}>
-                        {name}
-                      </option>
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`bk-freq-card${selected ? ' bk-freq-card--selected' : ''}`}
+                        onClick={() => setForm((prev) => ({ ...prev, frequency: opt.value }))}
+                      >
+                        {selected && <span className="bk-freq-card-check" aria-hidden="true"><CheckCircle2 className="icon-sm" /></span>}
+                        <span className="bk-freq-card-icon"><Icon className="icon-sm" aria-hidden="true" /></span>
+                        <span className="bk-freq-card-label">{opt.label}</span>
+                        <span className="bk-freq-card-hint">{opt.hint}</span>
+                      </button>
                     );
                   })}
-              </select>
-            </label>
-            <LoadingButton
-              type="button"
-              className="btn-primary btn-sm lp-pull-btn"
-              loading={pulling}
-              loadingText="Pulling…"
-              onClick={handlePull}
-            >
-              <CloudDownload className="icon-sm" aria-hidden="true" />
-              Pull now
-            </LoadingButton>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Settings form ───────────────────────────────── */}
-      <form className="config-form" onSubmit={handleSave}>
-        {/* Schedule section */}
-        <div className="config-form-section">
-          <h3 className="config-form-section-title">
-            <CalendarClock className="icon-sm" aria-hidden="true" />
-            Schedule
-          </h3>
-
-          <div className="bk-enable-row">
-            <div className="bk-enable-row-text">
-              <p className="bk-enable-row-label">Enable automatic pulls</p>
-              <p className="bk-enable-row-hint">
-                When enabled, the backend POSTs{' '}
-                <code>{'{ "date": "YYYY-MM-DD" }'}</code> to each enabled client endpoint on the
-                schedule below ({cron?.timezone || 'Africa/Nairobi'}). Shorter intervals let agents
-                see new payments sooner — closer to real-time.
-              </p>
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={Boolean(form.enabled)}
-              className={`bk-toggle${form.enabled ? ' bk-toggle--on' : ''}`}
-              onClick={() => setForm((prev) => ({ ...prev, enabled: !prev.enabled }))}
-            >
-              <span className="bk-toggle-thumb" />
-              <span className="sr-only">
-                {form.enabled ? 'Disable' : 'Enable'} automatic pulls
-              </span>
-            </button>
           </div>
+        )}
 
-          <div className="lp-freq-block">
-            <p className="bk-freq-label">Poll frequency</p>
-            <div className="lp-freq-grid">
-              {FREQUENCY_OPTIONS.map((opt) => {
-                const Icon = opt.icon;
-                const selected = form.frequency === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    className={`bk-freq-card${selected ? ' bk-freq-card--selected' : ''}`}
-                    onClick={() => setForm((prev) => ({ ...prev, frequency: opt.value }))}
-                  >
-                    {selected && (
-                      <span className="bk-freq-card-check" aria-hidden="true">
-                        <CheckCircle2 className="icon-sm" />
-                      </span>
-                    )}
-                    <span className="bk-freq-card-icon">
-                      <Icon className="icon-sm" aria-hidden="true" />
+        {/* Endpoints */}
+        {activeTab === 'endpoints' && (
+          <div id="intg-panel-endpoints" role="tabpanel" className="comm-panel">
+            <div className="comm-panel-header" style={{ '--panel-color': '#059669', '--panel-color-muted': 'color-mix(in srgb, #059669 10%, var(--bg-surface))' }}>
+              <div className="comm-panel-icon" style={{ background: 'color-mix(in srgb, #059669 14%, transparent)', color: '#059669', borderColor: 'color-mix(in srgb, #059669 28%, transparent)' }}>
+                <Link2 className="comm-panel-icon-svg" aria-hidden="true" />
+              </div>
+              <div className="comm-panel-header-text">
+                <div className="comm-panel-title-row">
+                  <h3 className="comm-panel-title">Client Endpoints</h3>
+                  {endpointsNeedsAction ? (
+                    <span className="comm-panel-badge comm-panel-badge--warn">
+                      {form.clients.length === 0 ? 'No endpoints' : 'Incomplete'}
                     </span>
-                    <span className="bk-freq-card-label">{opt.label}</span>
-                    <span className="bk-freq-card-hint">{opt.hint}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Per-client endpoints */}
-        <div className="config-form-section">
-          <div className="bk-section-hd">
-            <h3 className="config-form-section-title">
-              <Link2 className="icon-sm" aria-hidden="true" />
-              Per-client endpoints
-            </h3>
-            <button type="button" className="btn-primary btn-sm" onClick={addClient}>
-              <Plus className="icon-sm" aria-hidden="true" />
-              Add client
-            </button>
-          </div>
-
-          {/* How-to steps */}
-          <div className="bk-setup-steps">
-            <div className="bk-setup-step">
-              <span className="bk-setup-num">1</span>
-              <span>
-                Expose a <strong>POST</strong> endpoint that accepts{' '}
-                <code>{'{ "date": "YYYY-MM-DD" }'}</code> and returns debtors using the{' '}
-                <strong>same 31 CSV column names</strong>{' '}
-                (e.g. <code>full_name</code>, <code>loan_id</code>, <code>amount_repaid</code>).
-              </span>
-            </div>
-            <div className="bk-setup-step">
-              <span className="bk-setup-num">2</span>
-              <span>
-                OMNICRM creates <strong>one case file (CFID) per client per calendar day</strong>.
-                Later pulls the same day append to that CFID. New loans join that file; existing
-                loans update in place and keep their original CFID.
-              </span>
-            </div>
-            <div className="bk-setup-step">
-              <span className="bk-setup-num">3</span>
-              <span>
-                Set debt category, type, and currency below — they apply to every row pulled from
-                that client&apos;s API (same as the CSV bulk-upload form).
-              </span>
-            </div>
-            <div className="lp-security-note">
-              <Shield className="icon-sm" aria-hidden="true" />
-              <span>
-                API keys are stored encrypted in system config and never returned to the browser
-                after save.
-              </span>
-            </div>
-          </div>
-
-          {/* Expected JSON structure */}
-          <div className="lp-json-note">
-            <div className="lp-json-note-header">
-              <Braces className="icon-sm" aria-hidden="true" />
-              <div>
-                <p className="lp-json-note-title">Expected JSON response</p>
-                <p className="lp-json-note-desc">
-                  Request body: <code>{'{ "date": "YYYY-MM-DD" }'}</code>. Response may be a bare
-                  array, or an object with <code>debtors</code>, <code>data</code>, or{' '}
-                  <code>rows</code>. Keys match the CSV template (snake_case or camelCase).
-                </p>
-              </div>
-            </div>
-
-            <div className="lp-field-groups">
-              <div className="lp-field-group">
-                <p className="lp-field-group-label">
-                  <span className="lp-field-badge lp-field-badge--required">Compulsory</span>
-                  <span className="lp-field-group-count">
-                    {REQUIRED_JSON_FIELDS.length} required — row is rejected if any are missing
-                  </span>
-                </p>
-                <div className="lp-field-chips">
-                  {REQUIRED_JSON_FIELDS.map((f) => (
-                    <code key={f.key} className="lp-field-chip lp-field-chip--required">
-                      {f.key}
-                    </code>
-                  ))}
+                  ) : (
+                    <span className="comm-panel-badge" style={{ background: 'color-mix(in srgb, #059669 12%, transparent)', color: '#059669', borderColor: 'color-mix(in srgb, #059669 28%, transparent)' }}>
+                      {form.clients.length} client{form.clients.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
                 </div>
-              </div>
-              <div className="lp-field-group">
-                <p className="lp-field-group-label">
-                  <span className="lp-field-badge lp-field-badge--optional">Optional</span>
-                  <span className="lp-field-group-count">
-                    {OPTIONAL_JSON_FIELDS.length} optional — omit or leave blank if not available
-                  </span>
+                <p className="comm-panel-desc">
+                  One entry per lender API. OMNICRM posts the pull date to each endpoint and upserts the returned debtors.
                 </p>
-                <div className="lp-field-chips">
-                  {OPTIONAL_JSON_FIELDS.map((f) => (
-                    <code key={f.key} className="lp-field-chip lp-field-chip--optional">
-                      {f.key}
-                    </code>
-                  ))}
-                </div>
               </div>
-            </div>
-
-            <pre className="lp-json-pre" tabIndex={0}>
-              <code>{EXPECTED_JSON_SAMPLE}</code>
-            </pre>
-            <p className="lp-json-legend">
-              Comments in the sample (<code>// compulsory</code> / <code>// optional</code>) are
-              for documentation only — do not include them in the real API response.
-            </p>
-          </div>
-
-          {/* Empty state */}
-          {form.clients.length === 0 ? (
-            <div className="empty-state-card" style={{ marginTop: '1rem' }}>
-              <div className="empty-state-icon">
-                <CloudDownload className="empty-state-icon-svg" />
-              </div>
-              <h2 className="empty-state-title">No client endpoints yet</h2>
-              <p className="empty-state-description">
-                Add a client to start polling live payments instead of uploading a CSV daily.
-              </p>
-              <button type="button" className="btn-primary btn-sm" onClick={addClient}>
+              <button type="button" className="btn-primary btn-sm" onClick={addClient} style={{ flexShrink: 0 }}>
                 <Plus className="icon-sm" aria-hidden="true" />
                 Add client
               </button>
             </div>
-          ) : (
-            <div className="lp-client-list">
-              {form.clients.map((entry, index) => {
-                const clientName =
-                  clients.find((x) => String(x.id) === String(entry.clientId))?.name || null;
-                return (
-                  <div
-                    key={index}
-                    className={`lp-client-card${entry.enabled ? '' : ' lp-client-card--disabled'}`}
-                  >
-                    {/* Card header */}
-                    <div className="lp-client-card-header">
-                      <div className="lp-client-card-header-left">
-                        {clientName ? (
-                          <ClientAvatar name={clientName} />
-                        ) : (
-                          <span className="lp-client-avatar lp-client-avatar--empty">?</span>
-                        )}
-                        <div>
-                          <p className="lp-client-card-name">
-                            {clientName || (
-                              <span className="lp-client-card-name--empty">No client selected</span>
+
+            <div className="comm-panel-body" style={{ gap: '1rem' }}>
+              {/* How-to */}
+              <div className="intg-howto">
+                <div className="intg-howto-step">
+                  <span className="intg-howto-num">1</span>
+                  <span>
+                    Expose a <strong>POST</strong> endpoint that accepts{' '}
+                    <code>{'{ "date": "YYYY-MM-DD" }'}</code> and returns debtors using the{' '}
+                    <strong>same 31 CSV column names</strong> (e.g. <code>full_name</code>, <code>loan_id</code>).
+                  </span>
+                </div>
+                <div className="intg-howto-step">
+                  <span className="intg-howto-num">2</span>
+                  <span>
+                    OMNICRM creates <strong>one case file per client per calendar day</strong>. Later pulls the
+                    same day append to that file. New loans join it; existing loans update in place.
+                  </span>
+                </div>
+                <div className="intg-howto-step">
+                  <span className="intg-howto-num">3</span>
+                  <span>
+                    Set debt category, type, and currency below — they apply to every row pulled from that
+                    client&apos;s API (same as the CSV bulk-upload form).
+                  </span>
+                </div>
+                <div className="intg-security-note">
+                  <Shield className="icon-sm" aria-hidden="true" />
+                  <span>API keys are stored encrypted and never returned to the browser after save.</span>
+                </div>
+              </div>
+
+              {/* Client list */}
+              {form.clients.length === 0 ? (
+                <div className="empty-state-card">
+                  <div className="empty-state-icon"><CloudDownload className="empty-state-icon-svg" /></div>
+                  <h2 className="empty-state-title">No client endpoints yet</h2>
+                  <p className="empty-state-description">
+                    Add a client to start polling live payments instead of uploading a CSV daily.
+                  </p>
+                  <button type="button" className="btn-primary btn-sm" onClick={addClient}>
+                    <Plus className="icon-sm" aria-hidden="true" />
+                    Add client
+                  </button>
+                </div>
+              ) : (
+                <div className="lp-client-list">
+                  {form.clients.map((entry, index) => {
+                    const clientName = clients.find((x) => String(x.id) === String(entry.clientId))?.name || null;
+                    const incomplete = !entry.clientId || !entry.endpointUrl || !entry.regionId;
+                    return (
+                      <div key={index} className={`lp-client-card${entry.enabled ? '' : ' lp-client-card--disabled'}${incomplete ? ' lp-client-card--incomplete' : ''}`}>
+                        <div className="lp-client-card-header">
+                          <div className="lp-client-card-header-left">
+                            {clientName ? <ClientAvatar name={clientName} /> : <span className="lp-client-avatar lp-client-avatar--empty">?</span>}
+                            <div>
+                              <p className="lp-client-card-name">
+                                {clientName || <span className="lp-client-card-name--empty">No client selected</span>}
+                              </p>
+                              <p className="lp-client-card-meta">
+                                {entry.endpointUrl ? entry.endpointUrl.replace(/^https?:\/\//, '') : 'No endpoint set'}
+                              </p>
+                            </div>
+                            {incomplete && (
+                              <span className="intg-incomplete-pill">Incomplete</span>
                             )}
-                          </p>
-                          <p className="lp-client-card-meta">
-                            {entry.endpointUrl
-                              ? entry.endpointUrl.replace(/^https?:\/\//, '')
-                              : 'No endpoint set'}
-                          </p>
+                          </div>
+                          <div className="lp-client-card-header-right">
+                            <button type="button" className="btn-primary btn-sm lp-test-btn" disabled={testingId === index} onClick={() => handleTest(index)}>
+                              <RefreshCw className={`icon-sm${testingId === index ? ' bk-spin' : ''}`} aria-hidden="true" />
+                              Test
+                            </button>
+                            <button type="button" role="switch" aria-checked={Boolean(entry.enabled)} className={`bk-toggle${entry.enabled ? ' bk-toggle--on' : ''}`} onClick={() => updateClientEntry(index, { enabled: !entry.enabled })}>
+                              <span className="bk-toggle-thumb" />
+                              <span className="sr-only">{entry.enabled ? 'Disable' : 'Enable'} this client</span>
+                            </button>
+                            <button type="button" className="btn-icon-outline" aria-label="Remove client" onClick={() => removeClient(index)}>
+                              <Trash2 className="icon-sm" aria-hidden="true" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="lp-client-fields">
+                          <div className="lp-fields-row">
+                            <label className="bk-field">
+                              <span className="bk-field-label">Client</span>
+                              <select value={entry.clientId} onChange={(e) => updateClientEntry(index, { clientId: e.target.value })}>
+                                <option value="">Select client…</option>
+                                {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="bk-field lp-field-wide">
+                              <span className="bk-field-label"><Link2 className="icon-sm" aria-hidden="true" /> Endpoint URL</span>
+                              <input type="url" value={entry.endpointUrl} onChange={(e) => updateClientEntry(index, { endpointUrl: e.target.value })} placeholder="https://lender.example.com/api/debtors" autoComplete="off" />
+                            </label>
+                          </div>
+                          <div className="lp-fields-row">
+                            <label className="bk-field">
+                              <span className="bk-field-label"><KeyRound className="icon-sm" aria-hidden="true" /> API key</span>
+                              <input type="password" value={entry.apiKey} onChange={(e) => updateClientEntry(index, { apiKey: e.target.value })} placeholder={entry.apiKeySet ? 'Leave blank to keep the current key' : 'Bearer token / API key'} autoComplete="off" />
+                              {entry.apiKeySet && <span className="bk-key-set-badge"><CheckCircle2 className="icon-sm" aria-hidden="true" /> Key saved</span>}
+                            </label>
+                            <label className="bk-field">
+                              <span className="bk-field-label">Auth header</span>
+                              <input type="text" value={entry.authHeader} onChange={(e) => updateClientEntry(index, { authHeader: e.target.value })} placeholder="Authorization" autoComplete="off" />
+                            </label>
+                          </div>
+                          <div className="lp-classifier-grid">
+                            <label className="bk-field">
+                              <span className="bk-field-label">Debt category</span>
+                              <select value={entry.debtCategoryId} onChange={(e) => updateClientEntry(index, { debtCategoryId: e.target.value })}>
+                                <option value="">Select…</option>
+                                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="bk-field">
+                              <span className="bk-field-label">Debt type</span>
+                              <select value={entry.debtTypeId} onChange={(e) => updateClientEntry(index, { debtTypeId: e.target.value })}>
+                                <option value="">Select…</option>
+                                {debtTypes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="bk-field">
+                              <span className="bk-field-label">Currency</span>
+                              <select value={entry.currencyId} onChange={(e) => updateClientEntry(index, { currencyId: e.target.value })}>
+                                <option value="">Select…</option>
+                                {currencies.map((c) => <option key={c.id} value={c.id}>{c.code || c.name}</option>)}
+                              </select>
+                            </label>
+                            <label className="bk-field">
+                              <span className="bk-field-label">Region</span>
+                              <select value={entry.regionId} onChange={(e) => updateClientEntry(index, { regionId: e.target.value })}>
+                                <option value="">Select…</option>
+                                {regions.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+                              </select>
+                            </label>
+                          </div>
                         </div>
                       </div>
-                      <div className="lp-client-card-header-right">
-                        <button
-                          type="button"
-                          className="btn-primary btn-sm lp-test-btn"
-                          disabled={testingId === index}
-                          onClick={() => handleTest(index)}
-                        >
-                          <RefreshCw
-                            className={`icon-sm${testingId === index ? ' bk-spin' : ''}`}
-                            aria-hidden="true"
-                          />
-                          Test
-                        </button>
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={Boolean(entry.enabled)}
-                          className={`bk-toggle${entry.enabled ? ' bk-toggle--on' : ''}`}
-                          onClick={() => updateClientEntry(index, { enabled: !entry.enabled })}
-                        >
-                          <span className="bk-toggle-thumb" />
-                          <span className="sr-only">
-                            {entry.enabled ? 'Disable' : 'Enable'} this client
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-icon-outline"
-                          aria-label="Remove client"
-                          onClick={() => removeClient(index)}
-                        >
-                          <Trash2 className="icon-sm" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Fields */}
-                    <div className="lp-client-fields">
-                      {/* Row 1: client select + endpoint URL */}
-                      <div className="lp-fields-row">
-                        <label className="bk-field">
-                          <span className="bk-field-label">Client</span>
-                          <select
-                            value={entry.clientId}
-                            onChange={(e) =>
-                              updateClientEntry(index, { clientId: e.target.value })
-                            }
-                          >
-                            <option value="">Select client…</option>
-                            {clients.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="bk-field lp-field-wide">
-                          <span className="bk-field-label">
-                            <Link2 className="icon-sm" aria-hidden="true" />
-                            Endpoint URL
-                          </span>
-                          <input
-                            type="url"
-                            value={entry.endpointUrl}
-                            onChange={(e) =>
-                              updateClientEntry(index, { endpointUrl: e.target.value })
-                            }
-                            placeholder="https://lender.example.com/api/debtors"
-                            autoComplete="off"
-                          />
-                        </label>
-                      </div>
-
-                      {/* Row 2: API key + auth header */}
-                      <div className="lp-fields-row">
-                        <label className="bk-field">
-                          <span className="bk-field-label">
-                            <KeyRound className="icon-sm" aria-hidden="true" />
-                            API key
-                          </span>
-                          <input
-                            type="password"
-                            value={entry.apiKey}
-                            onChange={(e) =>
-                              updateClientEntry(index, { apiKey: e.target.value })
-                            }
-                            placeholder={
-                              entry.apiKeySet
-                                ? 'Leave blank to keep the current key'
-                                : 'Bearer token / API key'
-                            }
-                            autoComplete="off"
-                          />
-                          {entry.apiKeySet ? (
-                            <span className="bk-key-set-badge">
-                              <CheckCircle2 className="icon-sm" aria-hidden="true" />
-                              Key saved
-                            </span>
-                          ) : null}
-                        </label>
-                        <label className="bk-field">
-                          <span className="bk-field-label">Auth header</span>
-                          <input
-                            type="text"
-                            value={entry.authHeader}
-                            onChange={(e) =>
-                              updateClientEntry(index, { authHeader: e.target.value })
-                            }
-                            placeholder="Authorization"
-                            autoComplete="off"
-                          />
-                        </label>
-                      </div>
-
-                      {/* Row 3: category / type / currency */}
-                      <div className="lp-classifier-grid">
-                        <label className="bk-field">
-                          <span className="bk-field-label">Debt category</span>
-                          <select
-                            value={entry.debtCategoryId}
-                            onChange={(e) =>
-                              updateClientEntry(index, { debtCategoryId: e.target.value })
-                            }
-                          >
-                            <option value="">Select…</option>
-                            {categories.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="bk-field">
-                          <span className="bk-field-label">Debt type</span>
-                          <select
-                            value={entry.debtTypeId}
-                            onChange={(e) =>
-                              updateClientEntry(index, { debtTypeId: e.target.value })
-                            }
-                          >
-                            <option value="">Select…</option>
-                            {debtTypes.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="bk-field">
-                          <span className="bk-field-label">Currency</span>
-                          <select
-                            value={entry.currencyId}
-                            onChange={(e) =>
-                              updateClientEntry(index, { currencyId: e.target.value })
-                            }
-                          >
-                            <option value="">Select…</option>
-                            {currencies.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.code || c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className="config-form-actions">
-          <LoadingButton
-            type="submit"
-            className="btn-primary btn-sm"
-            loading={saving}
-            loadingText="Saving…"
-          >
+        {/* API Reference */}
+        {activeTab === 'reference' && (
+          <div id="intg-panel-reference" role="tabpanel" className="comm-panel">
+            <div className="comm-panel-header" style={{ '--panel-color': '#ea580c', '--panel-color-muted': 'color-mix(in srgb, #ea580c 10%, var(--bg-surface))' }}>
+              <div className="comm-panel-icon" style={{ background: 'color-mix(in srgb, #ea580c 14%, transparent)', color: '#ea580c', borderColor: 'color-mix(in srgb, #ea580c 28%, transparent)' }}>
+                <Braces className="comm-panel-icon-svg" aria-hidden="true" />
+              </div>
+              <div className="comm-panel-header-text">
+                <div className="comm-panel-title-row">
+                  <h3 className="comm-panel-title">API Reference</h3>
+                  <span className="comm-panel-badge" style={{ background: 'color-mix(in srgb, #ea580c 12%, transparent)', color: '#ea580c', borderColor: 'color-mix(in srgb, #ea580c 28%, transparent)' }}>
+                    Read-only
+                  </span>
+                </div>
+                <p className="comm-panel-desc">
+                  Expected request and response format for each client endpoint. Keys match the debtor CSV template — snake_case or camelCase both accepted.
+                </p>
+              </div>
+            </div>
+
+            <div className="comm-panel-body" style={{ gap: '1.25rem' }}>
+              {/* Request */}
+              <div className="intg-ref-block">
+                <p className="intg-ref-block-title">Request body</p>
+                <pre className="lp-json-pre" tabIndex={0}><code>{'{ "date": "YYYY-MM-DD" }'}</code></pre>
+              </div>
+
+              {/* Field lists */}
+              <div className="lp-field-groups">
+                <div className="lp-field-group">
+                  <p className="lp-field-group-label">
+                    <span className="lp-field-badge lp-field-badge--required">Compulsory</span>
+                    <span className="lp-field-group-count">{REQUIRED_JSON_FIELDS.length} required — row is rejected if any are missing</span>
+                  </p>
+                  <div className="lp-field-chips">
+                    {REQUIRED_JSON_FIELDS.map((f) => <code key={f.key} className="lp-field-chip lp-field-chip--required">{f.key}</code>)}
+                  </div>
+                </div>
+                <div className="lp-field-group">
+                  <p className="lp-field-group-label">
+                    <span className="lp-field-badge lp-field-badge--optional">Optional</span>
+                    <span className="lp-field-group-count">{OPTIONAL_JSON_FIELDS.length} optional — omit or leave blank if not available</span>
+                  </p>
+                  <div className="lp-field-chips">
+                    {OPTIONAL_JSON_FIELDS.map((f) => <code key={f.key} className="lp-field-chip lp-field-chip--optional">{f.key}</code>)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Full sample */}
+              <div className="intg-ref-block">
+                <p className="intg-ref-block-title">Full response sample</p>
+                <pre className="lp-json-pre" tabIndex={0}><code>{EXPECTED_JSON_SAMPLE}</code></pre>
+                <p className="lp-json-legend">
+                  Comments (<code>// compulsory</code> / <code>// optional</code>) are for documentation only — do not include them in the real response. The response may be a bare array or an object with a <code>debtors</code>, <code>data</code>, or <code>rows</code> key.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Save bar (visible when editing) ── */}
+      {needsSave && (
+        <div className="comm-save-bar">
+          <p className="comm-save-bar-note">
+            Changes apply to all clients after saving. The cron reschedules automatically.
+          </p>
+          <LoadingButton type="submit" className="btn-primary" loading={saving} loadingText="Saving…">
             Save integration settings
           </LoadingButton>
         </div>
-      </form>
-    </div>
+      )}
+    </form>
   );
 }
 

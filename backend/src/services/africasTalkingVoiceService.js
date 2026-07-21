@@ -10,24 +10,28 @@ const { recordActivityEvent } = require('./activityService');
 function getVoiceConfig(config) {
   const voice = config?.voice || {};
   return {
+    /** System-wide active dialer: yeastar | africastalking | '' */
+    activeProvider: String(voice.activeProvider || voice.provider || '').trim(),
     provider: String(voice.provider || '').trim(),
     username: String(voice.username || '').trim(),
     apiKey: String(voice.apiKey || '').trim(),
     voiceNumber: normalizePhone(voice.voiceNumber) || String(voice.voiceNumber || '').trim(),
     callbackBaseUrl: String(voice.callbackBaseUrl || '').replace(/\/$/, ''),
     recordCalls: voice.recordCalls !== false,
+    appBaseUrl: String(voice.appBaseUrl || '').replace(/\/$/, ''),
+    yeastar: voice.yeastar && typeof voice.yeastar === 'object' ? voice.yeastar : {},
   };
 }
 
+function isAfricasTalkingConfigured(voice) {
+  return Boolean(voice?.username && voice?.apiKey && voice?.voiceNumber);
+}
+
 function assertVoiceConfigured(voice) {
-  if (voice.provider !== 'africastalking') {
-    const err = new Error('Africa\'s Talking Voice is not enabled. Configure it under System Configurations → Communication.');
-    err.code = 'BAD_REQUEST';
-    err.status = 400;
-    throw err;
-  }
-  if (!voice.username || !voice.apiKey || !voice.voiceNumber) {
-    const err = new Error('Africa\'s Talking Voice credentials are incomplete (username, API key, and voice number required).');
+  if (!isAfricasTalkingConfigured(voice)) {
+    const err = new Error(
+      "Africa's Talking Voice credentials are incomplete (username, API key, and voice number required)."
+    );
     err.code = 'BAD_REQUEST';
     err.status = 400;
     throw err;
@@ -250,6 +254,7 @@ async function handleVoiceSessionCallback(body = {}) {
   const config = await getSystemConfig();
   const voice = getVoiceConfig(config);
   const record = voice.recordCalls !== false;
+  const activeProvider = String(voice.activeProvider || voice.provider || '').trim();
 
   const clientRequestId = String(body.clientRequestId || body.clientRequestID || '').trim();
   const sessionId = String(body.sessionId || body.sessionID || '').trim() || null;
@@ -257,15 +262,15 @@ async function handleVoiceSessionCallback(body = {}) {
   const destinationNumber =
     normalizePhone(body.destinationNumber || body.calledNumber) ||
     String(body.destinationNumber || body.calledNumber || '').trim();
-  const directionHint = String(body.direction || '').toLowerCase();
   const isActive = String(body.isActive || body.is_active || '1') === '1';
 
   if (!isActive) {
     return { xml: '<?xml version="1.0" encoding="UTF-8"?><Response></Response>', call: null };
   }
 
-  // Outbound bridge: lookup by clientRequestId stored when we initiated the call
-  if (clientRequestId.startsWith('out-')) {
+  // Outbound bridge: portfolio calls (out-) and admin test calls (at-test-)
+  // Allow finishing in-flight AT legs even if the admin just switched dialers.
+  if (clientRequestId.startsWith('out-') || clientRequestId.startsWith('at-test-')) {
     const [rows] = await pool.query(
       `SELECT * FROM voice_calls WHERE client_request_id = ? LIMIT 1`,
       [clientRequestId]
@@ -283,6 +288,18 @@ async function handleVoiceSessionCallback(body = {}) {
     return {
       xml: buildDialXml(call.debtor_number, { record }),
       call: mapVoiceCall(call),
+    };
+  }
+
+  // Inbound: only when Africa's Talking is the system-wide active dialer
+  if (activeProvider !== 'africastalking') {
+    return {
+      xml: buildRejectXml(
+        activeProvider
+          ? 'Africa\'s Talking is not the active dialer. Inbound calls are handled by the system dialer.'
+          : 'No active voice dialer is selected. Contact your system administrator.'
+      ),
+      call: null,
     };
   }
 
@@ -435,11 +452,15 @@ async function listVoiceCallsForDebtor(debtorId, { limit = 100 } = {}) {
 module.exports = {
   getVoiceConfig,
   assertVoiceConfigured,
+  isAfricasTalkingConfigured,
   initiateOutboundCall,
   handleVoiceSessionCallback,
   handleVoiceEventCallback,
   listVoiceCallsForDebtor,
   getVoiceCallById,
+  mapVoiceCall,
   buildDialXml,
   buildRejectXml,
+  normalizePhone,
+  callAtVoiceApi,
 };

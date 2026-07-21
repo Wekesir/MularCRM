@@ -12,9 +12,9 @@ const SUPERVISOR_ROLES = new Set([
 ]);
 const SENIOR_SUPERVISOR_ROLES = new Set([
   'senior supervisor',
-  'regional manager',
   'tenant administrator',
 ]);
+const REGIONAL_MANAGER_ROLES = new Set(['regional manager']);
 
 function hasReadAccess(node) {
   if (!node || typeof node !== 'object') return false;
@@ -28,6 +28,8 @@ export function usePermissions() {
   const roleName = useAppSelector((state) => state.auth.roleName);
   const callCenterId = useAppSelector((state) => state.auth.callCenterId);
   const callCenterName = useAppSelector((state) => state.auth.callCenterName);
+  const regionId = useAppSelector((state) => state.auth.regionId);
+  const regionName = useAppSelector((state) => state.auth.regionName);
   const permissionsLoaded = useAppSelector((state) => state.auth.permissionsLoaded);
   const permissionsLoading = useAppSelector((state) => state.auth.permissionsLoading);
   const permissionsError = useAppSelector((state) => state.auth.permissionsError);
@@ -36,10 +38,11 @@ export function usePermissions() {
   const isAgent = AGENT_ROLES.has(roleKey);
   const isSupervisor = SUPERVISOR_ROLES.has(roleKey);
   const isSeniorSupervisor = SENIOR_SUPERVISOR_ROLES.has(roleKey);
+  const isRegionalManager = REGIONAL_MANAGER_ROLES.has(roleKey);
 
-  /** Supervisors, Senior Supervisors, and System Admins may assign cases. */
+  /** Supervisors, Senior Supervisors, Regional Managers, and System Admins may assign cases. */
   const canAssignCases =
-    Boolean(isSystemAdmin) || isSupervisor || isSeniorSupervisor;
+    Boolean(isSystemAdmin) || isSupervisor || isSeniorSupervisor || isRegionalManager;
 
   const canReadReport = useCallback(
     (slug) => {
@@ -94,8 +97,11 @@ export function usePermissions() {
       isAgent,
       isSupervisor,
       isSeniorSupervisor,
+      isRegionalManager,
       callCenterId,
       callCenterName,
+      regionId,
+      regionName,
       canAssignCases,
       isSystemAdmin,
       permissionsLoaded,
@@ -111,8 +117,11 @@ export function usePermissions() {
       isAgent,
       isSupervisor,
       isSeniorSupervisor,
+      isRegionalManager,
       callCenterId,
       callCenterName,
+      regionId,
+      regionName,
       canAssignCases,
       isSystemAdmin,
       permissionsLoaded,

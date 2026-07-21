@@ -1,5 +1,10 @@
 const pool = require('../db/pool');
-const { resolveCallCenterScope, isSeniorSupervisorRole } = require('../config/orgRoles');
+const {
+  resolveCallCenterScope,
+  isSeniorSupervisorRole,
+  isRegionalManagerRole,
+  sqlCentersInRegion,
+} = require('../config/orgRoles');
 const { recordActivityEvent } = require('./activityService');
 
 function toNumber(value) {
@@ -49,6 +54,17 @@ async function listClients({ user = null, unassignedOnly = false } = {}) {
       if (!scope.callCenterId) return [];
       where.push('c.call_center_id = ?');
       params.push(scope.callCenterId);
+    } else if (scope.mode === 'region') {
+      if (!scope.regionId) return [];
+      if (scope.callCenterId) {
+        where.push('c.call_center_id = ?');
+        params.push(scope.callCenterId);
+        where.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+        params.push(scope.regionId);
+      } else {
+        where.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+        params.push(scope.regionId);
+      }
     } else if (scope.mode === 'none') {
       return [];
     }
@@ -77,17 +93,42 @@ async function assertCallerCanAccessClient(user, clientId) {
   if (!user || user.isSystemAdmin) return;
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'company') return;
-  if (scope.mode !== 'center' || !scope.callCenterId) {
-    const err = new Error('You are not bound to a call center');
-    err.code = 'FORBIDDEN';
-    err.status = 403;
-    throw err;
-  }
   const client = await getClientById(clientId);
   if (!client || client.deletedAt) {
     const err = new Error('Client not found');
     err.code = 'NOT_FOUND';
     err.status = 404;
+    throw err;
+  }
+  if (scope.mode === 'region') {
+    if (!scope.regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    if (!client.callCenterId) {
+      const err = new Error('This client is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    const [centers] = await pool.query(
+      `SELECT id FROM call_centers WHERE id = ? AND region_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [client.callCenterId, scope.regionId]
+    );
+    if (!centers[0]) {
+      const err = new Error('This client is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
     throw err;
   }
   if (Number(client.callCenterId) !== Number(scope.callCenterId)) {
@@ -284,13 +325,34 @@ async function assignClientCallCenter(clientId, callCenterId, { performedBy, for
   const alreadyAssigned = client.callCenterId != null;
   const isAdmin = Boolean(performedBy?.isSystemAdmin);
   const isSenior = isSeniorSupervisorRole(performedBy);
-  const canManage = isAdmin || isSenior;
+  const isRegional = isRegionalManagerRole(performedBy);
+  const canManage = isAdmin || isSenior || isRegional;
 
   if (!canManage) {
-    const err = new Error('Only Senior Supervisors can assign clients to call centers');
+    const err = new Error('Only Senior Supervisors or Regional Managers can assign clients to call centers');
     err.code = 'FORBIDDEN';
     err.status = 403;
     throw err;
+  }
+
+  if (isRegional && !isAdmin && !isSenior) {
+    const regionId = performedBy.regionId != null ? Number(performedBy.regionId) : null;
+    if (!regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    const [centerRows] = await pool.query(
+      `SELECT id FROM call_centers WHERE id = ? AND region_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [centerId, regionId]
+    );
+    if (!centerRows[0]) {
+      const err = new Error('Call center is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
   }
 
   if (alreadyAssigned && !force) {

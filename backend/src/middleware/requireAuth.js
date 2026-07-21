@@ -28,6 +28,9 @@ async function requireAuth(req, res, next) {
     isSystemAdmin: user.isSystemAdmin,
     callCenterId: user.callCenterId ?? null,
     callCenterName: user.callCenterName ?? null,
+    regionId: user.regionId ?? null,
+    regionName: user.regionName ?? null,
+    yeastarExtension: user.yeastarExtension ?? null,
   };
   req.authToken = token;
   req.sessionId = payload.sid || null;

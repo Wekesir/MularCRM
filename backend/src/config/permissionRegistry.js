@@ -71,6 +71,7 @@ const PERMISSION_REGISTRY = [
       { key: 'commission_rates', label: 'Commission Rates' },
       { key: 'debt_type', label: 'Debt Type' },
       { key: 'debt_category', label: 'Debt Category' },
+      { key: 'regions', label: 'Regions' },
       { key: 'client_type', label: 'Client Type' },
       { key: 'debtor_upload_rules', label: 'Debtor Upload Rules' },
       { key: 'currency', label: 'Currency' },

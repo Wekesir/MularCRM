@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
   AlertTriangle,
@@ -15,8 +15,17 @@ import { toast } from 'react-toastify';
 import { fetchOrgDashboard } from '../../api/dashboard';
 import StatCard from '../../components/StatCard';
 import SectionHeader from '../../components/SectionHeader';
+import {
+  Bar,
+  ChartCard,
+  createChartDataset,
+  abbreviateNumber,
+  useChartOptions,
+} from '../../components/charts';
 import { usePageActions } from '../../context/PageActionsContext';
+import { useTheme } from '../../context/ThemeContext';
 import { useCountUp } from '../../hooks/useCountUp';
+import { usePermissions } from '../../hooks/usePermissions';
 
 function formatCount(n) {
   return Number(n || 0).toLocaleString();
@@ -68,6 +77,8 @@ function DashSkeleton() {
 
 function SeniorSupervisorDashboard() {
   const { setActions } = usePageActions();
+  const { colorMode } = useTheme();
+  const { isRegionalManager, regionName } = usePermissions();
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -97,17 +108,52 @@ function SeniorSupervisorDashboard() {
   }, [load, setActions]);
 
   const summary = data?.summary || {};
-
-  if (isLoading && !data) return <DashSkeleton />;
-
   const hasUnassigned = Number(summary.unassignedClients || 0) > 0;
   const hasUnbound = Number(summary.unboundAgents || 0) > 0;
+  const callCenters = data?.callCenters || [];
 
   const todayFormatted = new Date().toLocaleDateString(undefined, {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
   });
+
+  const centerStaffData = useMemo(() => {
+    const rows = callCenters.slice(0, 10);
+    return {
+      labels: rows.map((c) => c.name),
+      datasets: [
+        createChartDataset({
+          label: 'Clients',
+          data: rows.map((c) => Number(c.clientCount) || 0),
+          type: 'bar',
+          colorIndex: 5,
+        }),
+        createChartDataset({
+          label: 'Supervisors',
+          data: rows.map((c) => Number(c.supervisorCount) || 0),
+          type: 'bar',
+          colorIndex: 4,
+        }),
+        createChartDataset({
+          label: 'Agents',
+          data: rows.map((c) => Number(c.agentCount) || 0),
+          type: 'bar',
+          colorIndex: 1,
+        }),
+      ],
+      _count: rows.length,
+    };
+  }, [callCenters, colorMode]);
+
+  const centerStaffOptions = useChartOptions({
+    plugins: { legend: { position: 'bottom' } },
+    scales: {
+      y: { ticks: { callback: (value) => abbreviateNumber(value) } },
+    },
+  });
+
+  if (isLoading && !data) return <DashSkeleton />;
 
   return (
     <div className="dashboard-page space-y-8">
@@ -119,7 +165,11 @@ function SeniorSupervisorDashboard() {
           <div className="adash-hero-left">
             <p className="adash-hero-eyebrow">{todayFormatted}</p>
             <p className="adash-hero-greeting">{getGreeting()}</p>
-            <p className="adash-hero-date">Organization-wide overview at a glance</p>
+            <p className="adash-hero-date">
+              {isRegionalManager
+                ? `${data?.regionName || regionName || 'Region'} overview at a glance`
+                : 'Organization-wide overview at a glance'}
+            </p>
             <div className="adash-hero-actions">
               <Link to="/management/call-centers" className="adash-hero-cta">
                 <Headphones className="icon-sm" aria-hidden="true" />
@@ -253,12 +303,26 @@ function SeniorSupervisorDashboard() {
         />
       </section>
 
+      {centerStaffData._count > 0 && (
+        <ChartCard
+          title="Staffing by call center"
+          description="Clients, supervisors, and agents per center"
+          icon={Headphones}
+          badge="Grouped"
+          accent="var(--theme-color)"
+          height={320}
+          className="ss-staffing-chart"
+        >
+          <Bar data={centerStaffData} options={centerStaffOptions} />
+        </ChartCard>
+      )}
+
       {/* ── Call Centers overview ─────────────────────────── */}
       <section className="cm-table-card">
         <SectionHeader
           icon={Headphones}
           title="Call Centers"
-          count={(data?.callCenters || []).length}
+          count={callCenters.length}
           linkTo="/management/call-centers"
           linkLabel="Manage →"
         />
@@ -274,7 +338,7 @@ function SeniorSupervisorDashboard() {
               </tr>
             </thead>
             <tbody>
-              {(data?.callCenters || []).length === 0 ? (
+              {callCenters.length === 0 ? (
                 <tr>
                   <td className="cm-td cm-td-empty" colSpan={5}>
                     <div className="cm-empty-state">
@@ -289,7 +353,7 @@ function SeniorSupervisorDashboard() {
                   </td>
                 </tr>
               ) : (
-                data.callCenters.map((c) => (
+                callCenters.map((c) => (
                   <tr key={c.id} className="cm-table-row">
                     <td className="cm-td">
                       <div className="ss-center-cell">

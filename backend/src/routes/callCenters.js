@@ -11,6 +11,7 @@ const {
   transferSupervisor,
   transferAgent,
   assertCanManageCallCenters,
+  assertCallerCanAccessCallCenter,
 } = require('../services/callCenterService');
 const { recordActivityEvent } = require('../services/activityService');
 
@@ -34,7 +35,7 @@ router.get('/', async (req, res) => {
   try {
     const includeInactive =
       req.query.includeInactive === '1' || req.query.includeInactive === 'true';
-    const centers = await listCallCenters({ includeInactive });
+    const centers = await listCallCenters({ includeInactive, user: req.user });
     res.json(centers);
   } catch (error) {
     handleServiceError(res, error, 'Failed to list call centers');
@@ -43,6 +44,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const center = await getCallCenterById(req.params.id);
     if (!center) return res.status(404).json({ message: 'Call center not found' });
     res.json(center);
@@ -53,6 +55,7 @@ router.get('/:id', async (req, res) => {
 
 router.get('/:id/staff', async (req, res) => {
   try {
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const staff = await getCallCenterStaff(req.params.id);
     if (!staff) return res.status(404).json({ message: 'Call center not found' });
     res.json(staff);
@@ -64,6 +67,7 @@ router.get('/:id/staff', async (req, res) => {
 router.get('/:id/assignable-staff', async (req, res) => {
   try {
     assertCanManageCallCenters(req.user);
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const center = await getCallCenterById(req.params.id);
     if (!center) return res.status(404).json({ message: 'Call center not found' });
 
@@ -101,7 +105,9 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     assertCanManageCallCenters(req.user);
-    const center = await updateCallCenter(req.params.id, req.body || {});
+    const center = await updateCallCenter(req.params.id, req.body || {}, {
+      performedBy: req.user,
+    });
     if (!center) return res.status(404).json({ message: 'Call center not found' });
     res.json(center);
   } catch (error) {
@@ -112,6 +118,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     assertCanManageCallCenters(req.user);
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const result = await softDeleteCallCenter(req.params.id);
     if (!result.deleted) return res.status(404).json({ message: 'Call center not found' });
     res.json(result);
@@ -123,6 +130,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/transfer-supervisor', async (req, res) => {
   try {
     assertCanManageCallCenters(req.user);
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const userId = Number(req.body?.userId);
     const toCallCenterId = Number(req.params.id);
     if (!Number.isFinite(userId)) {
@@ -138,6 +146,7 @@ router.post('/:id/transfer-supervisor', async (req, res) => {
 router.post('/:id/transfer-agent', async (req, res) => {
   try {
     assertCanManageCallCenters(req.user);
+    await assertCallerCanAccessCallCenter(req.user, req.params.id);
     const userId = Number(req.body?.userId);
     const toCallCenterId = Number(req.params.id);
     if (!Number.isFinite(userId)) {

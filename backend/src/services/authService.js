@@ -70,10 +70,11 @@ function maskEmail(email) {
 
 async function getUserAuthRow(email) {
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name, reg.name AS region_name
      FROM users u
      JOIN roles r ON u.role_id = r.id
      LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+     LEFT JOIN regions reg ON reg.id = u.region_id
      WHERE LOWER(u.email) = ?
      LIMIT 1`,
     [email.trim().toLowerCase()]
@@ -136,6 +137,9 @@ function buildAuthUser(row) {
     mustResetPassword: Boolean(row.must_reset_password),
     callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
     callCenterName: row.call_center_name || null,
+    regionId: row.region_id != null ? Number(row.region_id) : null,
+    regionName: row.region_name || null,
+    yeastarExtension: row.yeastar_extension ? String(row.yeastar_extension).trim() : null,
     avatar: '',
   };
 }
@@ -484,6 +488,9 @@ async function getMe(userId) {
     mustResetPassword: Boolean(extra.must_reset_password),
     callCenterId: user.callCenterId ?? null,
     callCenterName: user.callCenterName ?? null,
+    regionId: user.regionId ?? null,
+    regionName: user.regionName ?? null,
+    yeastarExtension: user.yeastarExtension ?? null,
     avatar: '',
   };
 }

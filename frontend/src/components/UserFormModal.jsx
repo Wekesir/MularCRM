@@ -12,9 +12,18 @@ import {
   ShieldCheck,
   ArchiveRestore,
   Headset,
+  MapPin,
 } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import PermissionMatrix from '../pages/system-config/PermissionMatrix';
+
+const AGENT_ROLE_KEYS = new Set(['agent', 'internal agent', 'external agent']);
+const SUPERVISOR_ROLE_KEYS = new Set([
+  'supervisor',
+  'manager',
+  'call centre supervisor',
+  'external agent supervisor',
+]);
 
 /* ── Field group helper ── */
 function FieldGroup({ label, required, icon: Icon, hint, children }) {
@@ -65,7 +74,15 @@ function roleNeedsCallCenter(roleName) {
   const key = String(roleName || '')
     .trim()
     .toLowerCase();
-  return key === 'agent' || key === 'supervisor' || key === 'manager';
+  return AGENT_ROLE_KEYS.has(key) || SUPERVISOR_ROLE_KEYS.has(key);
+}
+
+function roleNeedsRegion(roleName) {
+  return (
+    String(roleName || '')
+      .trim()
+      .toLowerCase() === 'regional manager'
+  );
 }
 
 function UserFormModal({
@@ -75,6 +92,7 @@ function UserFormModal({
   setForm,
   roles,
   callCenters = [],
+  regions = [],
   registry,
   isSaving,
   onSave,
@@ -87,6 +105,7 @@ function UserFormModal({
   const isEditing = Boolean(form.id);
   const selectedRole = roles.find((r) => r.id === Number(form.roleId));
   const needsCenter = roleNeedsCallCenter(selectedRole?.name);
+  const needsRegion = roleNeedsRegion(selectedRole?.name);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -274,7 +293,16 @@ function UserFormModal({
               <select
                 className="cf-select"
                 value={form.roleId}
-                onChange={(e) => setForm((p) => ({ ...p, roleId: e.target.value }))}
+                onChange={(e) => {
+                  const nextRoleId = e.target.value;
+                  const nextRole = roles.find((r) => r.id === Number(nextRoleId));
+                  setForm((p) => ({
+                    ...p,
+                    roleId: nextRoleId,
+                    callCenterId: roleNeedsCallCenter(nextRole?.name) ? p.callCenterId : '',
+                    regionId: roleNeedsRegion(nextRole?.name) ? p.regionId : '',
+                  }));
+                }}
               >
                 {roles.map((role) => (
                   <option key={role.id} value={role.id}>
@@ -283,6 +311,21 @@ function UserFormModal({
                 ))}
               </select>
             </div>
+          </FieldGroup>
+
+          <FieldGroup
+            label="Yeastar extension"
+            icon={Phone}
+            hint="PBX extension for Yeastar dialer (e.g. 1005)"
+          >
+            <input
+              type="text"
+              className="cf-input"
+              value={form.yeastarExtension || ''}
+              onChange={(e) => setForm((p) => ({ ...p, yeastarExtension: e.target.value }))}
+              placeholder="1005"
+              autoComplete="off"
+            />
           </FieldGroup>
 
           {needsCenter && (
@@ -297,6 +340,25 @@ function UserFormModal({
                   {callCenters.map((center) => (
                     <option key={center.id} value={center.id}>
                       {center.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </FieldGroup>
+          )}
+
+          {needsRegion && (
+            <FieldGroup label="Region" required icon={MapPin}>
+              <div className="cf-select-wrap">
+                <select
+                  className="cf-select"
+                  value={form.regionId || ''}
+                  onChange={(e) => setForm((p) => ({ ...p, regionId: e.target.value }))}
+                >
+                  <option value="">Select region…</option>
+                  {regions.map((region) => (
+                    <option key={region.id} value={region.id}>
+                      {region.name}
                     </option>
                   ))}
                 </select>

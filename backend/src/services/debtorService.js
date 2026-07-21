@@ -1,5 +1,19 @@
 const pool = require('../db/pool');
-const { resolveCallCenterScope, isAgentRole } = require('../config/orgRoles');
+const {
+  resolveCallCenterScope,
+  isAgentRole,
+  applyRegionDebtorSql,
+  sqlCentersInRegion,
+} = require('../config/orgRoles');
+
+async function assertCenterInRegion(centerId, regionId) {
+  if (!centerId || !regionId) return false;
+  const [centers] = await pool.query(
+    `SELECT id FROM call_centers WHERE id = ? AND region_id = ? AND deleted_at IS NULL LIMIT 1`,
+    [centerId, regionId]
+  );
+  return Boolean(centers[0]);
+}
 
 function toNumber(value) {
   const n = Number(value);
@@ -82,6 +96,8 @@ function normalizeDebtor(row) {
     currencyId: row.currency_id || null,
     currencyCode: row.currency_code || null,
     currencySymbol: row.currency_symbol || null,
+    regionId: row.region_id || null,
+    regionName: row.region_name || null,
     deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -99,6 +115,7 @@ const SELECT_WITH_CLIENT = `
          dt.name AS debt_type_name,
          cur.code AS currency_code,
          cur.symbol AS currency_symbol,
+         reg.name AS region_name,
          df.file_name AS file_name,
          df.is_closed AS file_is_closed,
          df.call_center_id AS file_call_center_id,
@@ -109,6 +126,7 @@ const SELECT_WITH_CLIENT = `
   LEFT JOIN debt_categories dc ON dc.id = d.debt_category_id
   LEFT JOIN debt_types dt ON dt.id = d.debt_type_id
   LEFT JOIN currencies cur ON cur.id = d.currency_id
+  LEFT JOIN regions reg ON reg.id = d.region_id
   LEFT JOIN debtor_files df ON df.id = d.file_id
   LEFT JOIN contact_statuses cs ON cs.id = d.contact_status_id
 `;
@@ -134,6 +152,10 @@ function applyDebtorCallCenterScope(clauses, params, user) {
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'none') {
     clauses.push('1=0');
+    return;
+  }
+  if (scope.mode === 'region') {
+    applyRegionDebtorSql(clauses, params, scope.regionId, scope.callCenterId);
     return;
   }
   if (scope.mode === 'center') {
@@ -167,6 +189,27 @@ async function assertCallerCanAccessDebtor(user, debtorRow) {
   }
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'company') return;
+  if (scope.mode === 'region') {
+    if (!scope.regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    const debtorRegionId =
+      debtorRow?.region_id != null ? Number(debtorRow.region_id) : null;
+    const centerId = resolveDebtorCallCenterId(debtorRow);
+    const inDebtorRegion =
+      debtorRegionId != null && Number(debtorRegionId) === Number(scope.regionId);
+    if (inDebtorRegion) return;
+    if (!centerId || !(await assertCenterInRegion(centerId, scope.regionId))) {
+      const err = new Error('This debtor is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
   if (scope.mode !== 'center' || !scope.callCenterId) {
     const err = new Error('You are not bound to a call center');
     err.code = 'FORBIDDEN';
@@ -199,6 +242,10 @@ function buildDebtorWhere(f = {}) {
   if (f.clientId != null && f.clientId !== '') {
     clauses.push('d.client_id = ?');
     params.push(Number(f.clientId));
+  }
+  if (f.regionId != null && f.regionId !== '') {
+    clauses.push('d.region_id = ?');
+    params.push(Number(f.regionId));
   }
   if (f.bucket && String(f.bucket).trim()) {
     clauses.push('d.bucket = ?');
@@ -397,6 +444,7 @@ async function createDebtor(data) {
   const debtCategoryId = data.debtCategoryId != null ? Number(data.debtCategoryId) || null : null;
   const debtTypeId = data.debtTypeId != null ? Number(data.debtTypeId) || null : null;
   const currencyId = data.currencyId != null ? Number(data.currencyId) || null : null;
+  const regionId = data.regionId != null ? Number(data.regionId) || null : null;
 
   const insertColumns = [
     'name', 'client_id', 'cfid', 'file_id', 'phone', 'assigned_agent',
@@ -407,7 +455,7 @@ async function createDebtor(data) {
     'physical_address', 'employer_and_address',
     'next_of_kin_full_name', 'next_of_kin_relationship', 'next_of_kin_phone_number', 'next_of_kin_email',
     'guarantor_full_name', 'guarantor_phones', 'guarantor_email', 'guarantor_address',
-    'debt_category_id', 'debt_type_id', 'currency_id',
+    'debt_category_id', 'debt_type_id', 'currency_id', 'region_id',
   ];
   const insertValues = [
     name,
@@ -449,6 +497,7 @@ async function createDebtor(data) {
     debtCategoryId,
     debtTypeId,
     currencyId,
+    regionId,
   ];
 
   if (insertColumns.length !== insertValues.length) {
@@ -474,6 +523,7 @@ async function createDebtor(data) {
 //   assigned_agent, is_closed, closure_reason, closed_at, file_id, cfid,
 //   client_id, loan_id, debt_category_id, debt_type_id, currency_id,
 //   contact_status_id, last_contacted_at, next_action_date.
+// Exception: region_id is refreshed from the live-payments client classifier on re-pull.
 async function upsertDebtorByLoanId(data) {
   const clientId = data.clientId != null ? Number(data.clientId) || null : null;
   const loanId = data.loanId ? String(data.loanId).trim() : null;
@@ -534,6 +584,7 @@ async function upsertDebtorByLoanId(data) {
     guarantorPhones: data.guarantorPhones ? String(data.guarantorPhones).trim() : null,
     guarantorEmail: data.guarantorEmail ? String(data.guarantorEmail).trim() : null,
     guarantorAddress: data.guarantorAddress ? String(data.guarantorAddress).trim() : null,
+    regionId: data.regionId != null ? Number(data.regionId) || null : null,
   };
 
   const updates = [
@@ -581,9 +632,16 @@ async function upsertDebtorByLoanId(data) {
     nextValues.guarantorPhones,
     nextValues.guarantorEmail,
     nextValues.guarantorAddress,
-    debtorId,
   ];
 
+  // Refresh region from live-payments classifier when a region is supplied.
+  // CSV / other imports omit it so existing region_id is preserved.
+  if (data.regionId != null) {
+    updates.push('region_id = ?');
+    values.push(nextValues.regionId);
+  }
+
+  values.push(debtorId);
   await pool.query(`UPDATE debtors SET ${updates.join(', ')} WHERE id = ?`, values);
 
   const numEq = (a, b) => (Number(a) || 0) === (Number(b) || 0);
@@ -794,18 +852,33 @@ async function assertCallerCanAccessDebtorFile(user, fileRow) {
   if (!user || user.isSystemAdmin) return;
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'company') return;
-  if (scope.mode !== 'center' || !scope.callCenterId) {
-    const err = new Error('You are not bound to a call center');
-    err.code = 'FORBIDDEN';
-    err.status = 403;
-    throw err;
-  }
   const fileCenter =
     fileRow?.call_center_id != null
       ? Number(fileRow.call_center_id)
       : fileRow?.client_call_center_id != null
         ? Number(fileRow.client_call_center_id)
         : null;
+  if (scope.mode === 'region') {
+    if (!scope.regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    if (!fileCenter || !(await assertCenterInRegion(fileCenter, scope.regionId))) {
+      const err = new Error('This portfolio is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
+  if (scope.mode !== 'center' || !scope.callCenterId) {
+    const err = new Error('You are not bound to a call center');
+    err.code = 'FORBIDDEN';
+    err.status = 403;
+    throw err;
+  }
   if (!fileCenter || Number(fileCenter) !== Number(scope.callCenterId)) {
     const err = new Error('This portfolio is not assigned to your call center');
     err.code = 'FORBIDDEN';
@@ -863,7 +936,24 @@ async function listDebtorFiles({ user = null } = {}) {
     } else {
       const scope = resolveCallCenterScope(user);
       if (scope.mode === 'none') return [];
-      if (scope.mode === 'center') {
+      if (scope.mode === 'region') {
+        if (!scope.regionId) return [];
+        if (scope.callCenterId) {
+          where.push(
+            '(df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))'
+          );
+          params.push(scope.callCenterId, scope.callCenterId);
+          where.push(
+            `COALESCE(df.call_center_id, c.call_center_id) IN (${sqlCentersInRegion()})`
+          );
+          params.push(scope.regionId);
+        } else {
+          where.push(
+            `COALESCE(df.call_center_id, c.call_center_id) IN (${sqlCentersInRegion()})`
+          );
+          params.push(scope.regionId);
+        }
+      } else if (scope.mode === 'center') {
         if (!scope.callCenterId) return [];
         where.push(
           '(df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))'

@@ -995,6 +995,38 @@ async function seedPaymentReminderTemplates() {
   });
 }
 
+async function initRegionsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS regions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      code VARCHAR(48) NULL,
+      description VARCHAR(255) NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_regions_name (name)
+    )
+  `);
+
+  const defaults = [
+    ['Mombasa', 'mombasa'],
+    ['Nairobi', 'nairobi'],
+    ['Marsabit', 'marsabit'],
+    ['Nyamira', 'nyamira'],
+    ['Kitale', 'kitale'],
+    ['Kwale', 'kwale'],
+    ['Machakos', 'machakos'],
+    ['Lamu', 'lamu'],
+  ];
+  for (const [name, code] of defaults) {
+    await pool.query(
+      'INSERT IGNORE INTO regions (name, code, description, is_active) VALUES (?, ?, NULL, 1)',
+      [name, code]
+    );
+  }
+}
+
 async function initCallCenterTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS call_centers (
@@ -1015,6 +1047,66 @@ async function initCallCenterTables() {
 
   await addColumnIfNotExists('users', 'call_center_id', 'INT NULL DEFAULT NULL');
   await addIndexIfNotExists('users', 'idx_users_call_center_id', 'call_center_id');
+  await addColumnIfNotExists('users', 'region_id', 'INT NULL DEFAULT NULL');
+  await addIndexIfNotExists('users', 'idx_users_region_id', 'region_id');
+  await addColumnIfNotExists('users', 'yeastar_extension', 'VARCHAR(32) NULL DEFAULT NULL');
+  await addIndexIfNotExists('users', 'idx_users_yeastar_extension', 'yeastar_extension');
+  // Legacy per–call-center dialer column (unused; active dialer is system-wide in system_config.voice.activeProvider)
+  await addColumnIfNotExists(
+    'call_centers',
+    'voice_provider',
+    "VARCHAR(40) NULL DEFAULT NULL"
+  );
+  await addColumnIfNotExists('call_centers', 'region_id', 'INT NULL DEFAULT NULL');
+  await addIndexIfNotExists('call_centers', 'idx_call_centers_region_id', 'region_id');
+
+  try {
+    const [fks] = await pool.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'call_centers' AND COLUMN_NAME = 'region_id'
+         AND REFERENCED_TABLE_NAME = 'regions'
+       LIMIT 1`
+    );
+    if (!fks[0]) {
+      await pool.query(
+        `ALTER TABLE call_centers
+         ADD CONSTRAINT fk_call_centers_region
+         FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL`
+      );
+    }
+  } catch (error) {
+    console.warn('[db] call_centers.region_id FK:', error.message);
+  }
+
+  // One-time: migrate first call-center voice_provider → system activeProvider when unset
+  try {
+    const [cfgRows] = await pool.query('SELECT config FROM system_config WHERE id = 1');
+    if (cfgRows[0]) {
+      const config =
+        typeof cfgRows[0].config === 'string'
+          ? JSON.parse(cfgRows[0].config)
+          : cfgRows[0].config || {};
+      const voice = config.voice || {};
+      const current = String(voice.activeProvider || voice.provider || '').trim();
+      if (!current) {
+        const [ccRows] = await pool.query(
+          `SELECT voice_provider FROM call_centers
+           WHERE deleted_at IS NULL AND voice_provider IS NOT NULL AND voice_provider != ''
+           ORDER BY id ASC LIMIT 1`
+        );
+        const migrated = String(ccRows[0]?.voice_provider || '').trim();
+        if (migrated === 'yeastar' || migrated === 'africastalking') {
+          config.voice = { ...voice, activeProvider: migrated };
+          await pool.query('UPDATE system_config SET config = ? WHERE id = 1', [
+            JSON.stringify(config),
+          ]);
+          console.log(`[db] migrated system voice.activeProvider from call center → ${migrated}`);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('[db] voice.activeProvider migration:', error.message);
+  }
 
   try {
     const [fks] = await pool.query(
@@ -1032,6 +1124,39 @@ async function initCallCenterTables() {
     }
   } catch (error) {
     console.warn('[db] users.call_center_id FK:', error.message);
+  }
+
+  try {
+    const [fks] = await pool.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'region_id'
+         AND REFERENCED_TABLE_NAME = 'regions'
+       LIMIT 1`
+    );
+    if (!fks[0]) {
+      await pool.query(
+        `ALTER TABLE users
+         ADD CONSTRAINT fk_users_region
+         FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL`
+      );
+    }
+  } catch (error) {
+    console.warn('[db] users.region_id FK:', error.message);
+  }
+
+  // Bind demo Regional Manager to Nairobi when unbound.
+  try {
+    await pool.query(
+      `UPDATE users u
+       JOIN roles r ON r.id = u.role_id
+       JOIN regions reg ON reg.name = 'Nairobi'
+       SET u.region_id = reg.id
+       WHERE u.email = 'regional.manager@omnicrm.com'
+         AND r.name = 'Regional Manager'
+         AND u.region_id IS NULL`
+    );
+  } catch (error) {
+    console.warn('[db] regional manager region seed:', error.message);
   }
 
   // clients table is created in initDebtorTables — only alter when present.
@@ -1069,6 +1194,7 @@ async function initDatabase() {
   await initSystemConfigTable();
   await initAccessControlTables();
   await initAuthTables();
+  await initRegionsTable();
   await initCallCenterTables();
   await initNotificationsTable();
   await initReportAccessTable();
@@ -1303,11 +1429,31 @@ async function initDebtConfigTables() {
   await addColumnIfNotExists('debtors', 'debt_category_id', 'INT NULL DEFAULT NULL');
   await addColumnIfNotExists('debtors', 'debt_type_id', 'INT NULL DEFAULT NULL');
   await addColumnIfNotExists('debtors', 'currency_id', 'INT NULL DEFAULT NULL');
+  await addColumnIfNotExists('debtors', 'region_id', 'INT NULL DEFAULT NULL');
 
   // Indexes for the new FK columns (guard against duplicate-index errors).
   await addIndexIfNotExists('debtors', 'idx_debtors_debt_category', 'debt_category_id');
   await addIndexIfNotExists('debtors', 'idx_debtors_debt_type', 'debt_type_id');
   await addIndexIfNotExists('debtors', 'idx_debtors_currency', 'currency_id');
+  await addIndexIfNotExists('debtors', 'idx_debtors_region', 'region_id');
+
+  try {
+    const [fks] = await pool.query(
+      `SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'debtors' AND COLUMN_NAME = 'region_id'
+         AND REFERENCED_TABLE_NAME = 'regions'
+       LIMIT 1`
+    );
+    if (!fks[0]) {
+      await pool.query(
+        `ALTER TABLE debtors
+         ADD CONSTRAINT fk_debtors_region
+         FOREIGN KEY (region_id) REFERENCES regions(id) ON DELETE SET NULL`
+      );
+    }
+  } catch (error) {
+    console.warn('[db] debtors.region_id FK:', error.message);
+  }
 
   // ── debtor_files ── one row per bulk-upload batch. Its id becomes the shared
   //    `cfid` stamped on every debtor imported from that batch.
@@ -1792,6 +1938,7 @@ module.exports = {
   initSystemConfigTable,
   initAccessControlTables,
   initAuthTables,
+  initRegionsTable,
   initCallCenterTables,
   initNotificationsTable,
   initReportAccessTable,

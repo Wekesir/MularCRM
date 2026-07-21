@@ -7,9 +7,9 @@ const { getSmsTemplateById, getEmailTemplateById } = require('./templateService'
 const { recordActivityEvent } = require('./activityService');
 const { createPtpArrangement } = require('./ptpService');
 const {
-  initiateOutboundCall,
   listVoiceCallsForDebtor,
 } = require('./africasTalkingVoiceService');
+const { startOutboundCall } = require('./dialerService');
 
 const CHANNELS = new Set(['call', 'sms', 'email']);
 
@@ -759,7 +759,7 @@ async function getPortfolioActivity(user, debtorId, { channel = 'all', limit = 1
 
 async function startPortfolioCall(user, debtorId, payload = {}) {
   const debtor = await getAssignedDebtorOrThrow(user, debtorId);
-  return initiateOutboundCall(user, {
+  return startOutboundCall(user, {
     debtor,
     simCardId: payload.simCardId ? Number(payload.simCardId) : null,
   });

@@ -4,6 +4,7 @@ const {
   AGENT_ROLE_NAMES,
   isAgentRole,
   resolveCallCenterScope,
+  sqlCentersInRegion,
 } = require('../config/orgRoles');
 
 function normalizeAgent(row) {
@@ -53,7 +54,18 @@ async function listAgents({
       };
 
   if (scope.mode === 'none') return [];
-  if (scope.mode === 'center') {
+  if (scope.mode === 'region') {
+    if (!scope.regionId) return [];
+    if (scope.callCenterId) {
+      where.push('u.call_center_id = ?');
+      params.push(scope.callCenterId);
+      where.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      where.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
+  } else if (scope.mode === 'center') {
     if (!scope.callCenterId) return [];
     where.push('u.call_center_id = ?');
     params.push(scope.callCenterId);

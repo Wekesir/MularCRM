@@ -24,7 +24,7 @@ const { recordActivityEvent, recordActivityEvents } = require('../services/activ
 const { requireAuth } = require('../middleware/requireAuth');
 const { requireSystemAdmin } = require('../middleware/requireSystemAdmin');
 const { getUserEffectivePermissions } = require('../services/userService');
-const { isSeniorSupervisorRole } = require('../config/orgRoles');
+const { isSeniorSupervisorRole, isRegionalManagerRole } = require('../config/orgRoles');
 
 const router = express.Router();
 
@@ -36,7 +36,7 @@ async function assertCanBulkUploadDebtors(user) {
     err.status = 401;
     throw err;
   }
-  if (user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
+  if (user.isSystemAdmin || isSeniorSupervisorRole(user) || isRegionalManagerRole(user)) return;
   const perms = await getUserEffectivePermissions(user.id);
   if (perms?.management?.debtor_management?.create) return;
   const err = new Error('You do not have permission to upload debtor files');
@@ -68,6 +68,7 @@ function debtorFilters(req) {
     nextActionFrom: q.nextActionFrom || null,
     nextActionTo: q.nextActionTo || null,
     search: q.search || null,
+    regionId: q.regionId || null,
   };
 }
 

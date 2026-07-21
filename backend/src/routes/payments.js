@@ -8,7 +8,7 @@ router.use(requireAuth);
 // GET /api/payments?page=&pageSize=&clientId=&debtCategoryId=&fileId=&agentName=&source=&dateFrom=&dateTo=&search=
 router.get('/', async (req, res) => {
   try {
-    const result = await listPayments(req.query);
+    const result = await listPayments({ ...req.query, user: req.user });
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Failed to list payments', detail: error.message });
@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 
 router.get('/totals', async (req, res) => {
   try {
-    const totals = await getPaymentTotals(req.query);
+    const totals = await getPaymentTotals({ ...req.query, user: req.user });
     res.json(totals);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load payment totals', detail: error.message });

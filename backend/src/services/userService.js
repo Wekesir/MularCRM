@@ -23,6 +23,9 @@ function normalizeUser(row) {
     mustResetPassword: Boolean(row.must_reset_password),
     callCenterId: row.call_center_id != null ? Number(row.call_center_id) : null,
     callCenterName: row.call_center_name || null,
+    regionId: row.region_id != null ? Number(row.region_id) : null,
+    regionName: row.region_name || null,
+    yeastarExtension: row.yeastar_extension ? String(row.yeastar_extension).trim() : null,
     deletedAt: row.deleted_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -30,10 +33,12 @@ function normalizeUser(row) {
 }
 
 const USER_SELECT = `
-  SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name
+  SELECT u.*, r.name AS role_name, r.is_system_admin,
+         cc.name AS call_center_name, reg.name AS region_name
   FROM users u
   JOIN roles r ON u.role_id = r.id
   LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+  LEFT JOIN regions reg ON reg.id = u.region_id
 `;
 
 async function listUsers() {
@@ -52,13 +57,20 @@ async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '
     FROM users u
     JOIN roles r ON u.role_id = r.id
     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+    LEFT JOIN regions reg ON reg.id = u.region_id
     WHERE u.deleted_at IS NULL
   `;
   const searchClause = searchValue
-    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ? OR cc.name LIKE ?)'
+    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ? OR cc.name LIKE ? OR reg.name LIKE ?)'
     : '';
   const searchParams = searchValue
-    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
+    ? [
+        `%${searchValue}%`,
+        `%${searchValue}%`,
+        `%${searchValue}%`,
+        `%${searchValue}%`,
+        `%${searchValue}%`,
+      ]
     : [];
 
   const [countAllRows] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom}`);
@@ -69,7 +81,7 @@ async function listUsersPaginated({ draw = 1, start = 0, length = 10, search = '
     : countAllRows;
 
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name ${baseFrom}${searchClause} ORDER BY u.name ASC LIMIT ? OFFSET ?`,
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name, reg.name AS region_name ${baseFrom}${searchClause} ORDER BY u.name ASC LIMIT ? OFFSET ?`,
     [...searchParams, Number(length), Number(start)]
   );
 
@@ -102,13 +114,14 @@ async function listDeletedUsersPaginated({
     FROM users u
     JOIN roles r ON u.role_id = r.id
     LEFT JOIN call_centers cc ON cc.id = u.call_center_id AND cc.deleted_at IS NULL
+    LEFT JOIN regions reg ON reg.id = u.region_id
     WHERE u.deleted_at IS NOT NULL
   `;
   const searchClause = searchValue
-    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ?)'
+    ? ' AND (u.name LIKE ? OR u.email LIKE ? OR r.name LIKE ? OR reg.name LIKE ?)'
     : '';
   const searchParams = searchValue
-    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
+    ? [`%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`, `%${searchValue}%`]
     : [];
 
   const [countAllRows] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom}`);
@@ -119,7 +132,7 @@ async function listDeletedUsersPaginated({
     : countAllRows;
 
   const [rows] = await pool.query(
-    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name ${baseFrom}${searchClause} ORDER BY u.deleted_at DESC LIMIT ? OFFSET ?`,
+    `SELECT u.*, r.name AS role_name, r.is_system_admin, cc.name AS call_center_name, reg.name AS region_name ${baseFrom}${searchClause} ORDER BY u.deleted_at DESC LIMIT ? OFFSET ?`,
     [...searchParams, Number(length), Number(start)]
   );
 
@@ -179,6 +192,28 @@ async function validateCallCenterForRole(roleName, callCenterId) {
   return { callCenterId: id };
 }
 
+async function validateRegionForRole(roleName, regionId) {
+  const { requiresRegion } = require('../config/orgRoles');
+  if (!requiresRegion(roleName)) {
+    return { regionId: null };
+  }
+  const id = regionId != null && regionId !== '' ? Number(regionId) : null;
+  if (!Number.isFinite(id)) {
+    return { error: 'Region is required for Regional Managers', code: 'VALIDATION' };
+  }
+  const [regions] = await pool.query(
+    `SELECT id, is_active FROM regions WHERE id = ? LIMIT 1`,
+    [id]
+  );
+  if (!regions[0]) {
+    return { error: 'Region not found', code: 'VALIDATION' };
+  }
+  if (!regions[0].is_active) {
+    return { error: 'Region is inactive', code: 'VALIDATION' };
+  }
+  return { regionId: id };
+}
+
 async function createUser({
   name,
   email,
@@ -188,6 +223,8 @@ async function createUser({
   phone = null,
   password = null,
   callCenterId = null,
+  regionId = null,
+  yeastarExtension = null,
 }) {
   const normalizedEmail = String(email || '').trim().toLowerCase();
   const existing = await getUserByEmail(normalizedEmail);
@@ -211,14 +248,18 @@ async function createUser({
   const roleName = await resolveRoleName(roleId);
   const centerCheck = await validateCallCenterForRole(roleName, callCenterId);
   if (centerCheck.error) return centerCheck;
+  const regionCheck = await validateRegionForRole(roleName, regionId);
+  if (regionCheck.error) return regionCheck;
 
   const { hashPassword } = require('./passwordService');
   const passwordHash = password ? hashPassword(password) : null;
   const mustResetPassword = Boolean(password);
 
+  const ext = yeastarExtension != null ? String(yeastarExtension).trim() || null : null;
+
   const [result] = await pool.query(
-    `INSERT INTO users (name, email, role_id, permission_overrides, is_active, phone, password_hash, must_reset_password, call_center_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (name, email, role_id, permission_overrides, is_active, phone, password_hash, must_reset_password, call_center_id, region_id, yeastar_extension)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name,
       normalizedEmail,
@@ -229,6 +270,8 @@ async function createUser({
       passwordHash,
       mustResetPassword,
       centerCheck.callCenterId,
+      regionCheck.regionId,
+      ext,
     ]
   );
 
@@ -237,7 +280,18 @@ async function createUser({
 
 async function updateUser(
   id,
-  { name, email, roleId, permissionOverrides, isActive, phone, password, callCenterId }
+  {
+    name,
+    email,
+    roleId,
+    permissionOverrides,
+    isActive,
+    phone,
+    password,
+    callCenterId,
+    regionId,
+    yeastarExtension,
+  }
 ) {
   const user = await getUserById(id);
   if (!user) return null;
@@ -249,6 +303,10 @@ async function updateUser(
   const centerCheck = await validateCallCenterForRole(roleName, nextCenter);
   if (centerCheck.error) return centerCheck;
 
+  const nextRegion = regionId !== undefined ? regionId : user.regionId;
+  const regionCheck = await validateRegionForRole(roleName, nextRegion);
+  if (regionCheck.error) return regionCheck;
+
   const { hashPassword } = require('./passwordService');
   let passwordHash = undefined;
   let mustResetPassword = undefined;
@@ -257,6 +315,13 @@ async function updateUser(
     passwordHash = hashPassword(password);
     mustResetPassword = true;
   }
+
+  const nextExt =
+    yeastarExtension !== undefined
+      ? yeastarExtension != null
+        ? String(yeastarExtension).trim() || null
+        : null
+      : user.yeastarExtension;
 
   await pool.query(
     `UPDATE users SET
@@ -267,6 +332,8 @@ async function updateUser(
       is_active = ?,
       phone = ?,
       call_center_id = ?,
+      region_id = ?,
+      yeastar_extension = ?,
       password_hash = COALESCE(?, password_hash),
       must_reset_password = COALESCE(?, must_reset_password)
      WHERE id = ?`,
@@ -284,6 +351,8 @@ async function updateUser(
       isActive ?? user.isActive,
       phone !== undefined ? phone || null : user.phone,
       centerCheck.callCenterId,
+      regionCheck.regionId,
+      nextExt,
       passwordHash ?? null,
       mustResetPassword ?? null,
       id,

@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useSystemConfig } from '../../context/SystemConfigContext';
+import {
+  clearPageDocumentTitle,
+  setPageDocumentTitle,
+} from '../../utils/documentTitle';
 
 const tabs = [
   { path: '/profile', label: 'Profile', end: true },
@@ -13,10 +17,8 @@ function ProfilePage() {
   const { businessName } = useSystemConfig();
 
   useEffect(() => {
-    document.title = `My Profile | ${businessName}`;
-    return () => {
-      document.title = businessName;
-    };
+    setPageDocumentTitle('My Profile', businessName);
+    return () => clearPageDocumentTitle(businessName);
   }, [businessName]);
 
   return (

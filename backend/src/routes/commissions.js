@@ -17,7 +17,7 @@ router.use(requireAuth);
 // GET /api/commissions/summary?clientId=&debtCategoryId=&status=&agentName=&periodFrom=&periodTo=&search=
 router.get('/summary', async (req, res) => {
   try {
-    const rows = await listClientCategorySummary(req.query);
+    const rows = await listClientCategorySummary({ ...req.query, user: req.user });
     res.json(rows);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load commission summary', detail: error.message });
@@ -26,7 +26,7 @@ router.get('/summary', async (req, res) => {
 
 router.get('/earnings', async (req, res) => {
   try {
-    const result = await listEarnings(req.query);
+    const result = await listEarnings({ ...req.query, user: req.user });
     res.json(result);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load commission earnings', detail: error.message });
@@ -35,7 +35,7 @@ router.get('/earnings', async (req, res) => {
 
 router.get('/totals', async (req, res) => {
   try {
-    const totals = await getTotals(req.query);
+    const totals = await getTotals({ ...req.query, user: req.user });
     res.json(totals);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load commission totals', detail: error.message });
@@ -44,7 +44,7 @@ router.get('/totals', async (req, res) => {
 
 router.get('/payouts', async (req, res) => {
   try {
-    const rows = await listPayouts(req.query);
+    const rows = await listPayouts({ ...req.query, user: req.user });
     res.json(rows);
   } catch (error) {
     res.status(500).json({ message: 'Failed to load commission payouts', detail: error.message });

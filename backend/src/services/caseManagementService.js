@@ -6,6 +6,7 @@ const { assertCallerCanAccessClient } = require('./clientService');
 const {
   resolveCallCenterScope,
   isSupervisorRole,
+  sqlCentersInRegion,
 } = require('../config/orgRoles');
 
 /** Prefer file-level call center, fall back to client's binding. */
@@ -25,13 +26,38 @@ async function assertCallerCanAccessFile(user, file) {
   if (!user || user.isSystemAdmin) return;
   const scope = resolveCallCenterScope(user);
   if (scope.mode === 'company') return;
+  const fileCenter = await getFileCallCenterId(file);
+  if (scope.mode === 'region') {
+    if (!scope.regionId) {
+      const err = new Error('You are not bound to a region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    if (!fileCenter) {
+      const err = new Error('This portfolio is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    const [centers] = await pool.query(
+      `SELECT id FROM call_centers WHERE id = ? AND region_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [fileCenter, scope.regionId]
+    );
+    if (!centers[0]) {
+      const err = new Error('This portfolio is not in your region');
+      err.code = 'FORBIDDEN';
+      err.status = 403;
+      throw err;
+    }
+    return;
+  }
   if (scope.mode !== 'center' || !scope.callCenterId) {
     const err = new Error('You are not bound to a call center');
     err.code = 'FORBIDDEN';
     err.status = 403;
     throw err;
   }
-  const fileCenter = await getFileCallCenterId(file);
   if (!fileCenter || Number(fileCenter) !== Number(scope.callCenterId)) {
     const err = new Error('This portfolio is not assigned to your call center');
     err.code = 'FORBIDDEN';
@@ -43,6 +69,36 @@ async function assertCallerCanAccessFile(user, file) {
 async function assertAgentsInCallerCenter(user, agents, fileClientCallCenterId) {
   if (!user || user.isSystemAdmin) return;
   const scope = resolveCallCenterScope(user);
+  if (scope.mode === 'region') {
+    if (!scope.regionId) return;
+    const outsiderIds = agents
+      .map((a) => a.callCenterId)
+      .filter((id) => id != null);
+    if (!outsiderIds.length) {
+      const err = new Error(
+        'All selected agents must belong to a call center in your region'
+      );
+      err.code = 'VALIDATION';
+      throw err;
+    }
+    const [centers] = await pool.query(
+      `SELECT id FROM call_centers
+       WHERE id IN (?) AND region_id = ? AND deleted_at IS NULL`,
+      [outsiderIds, scope.regionId]
+    );
+    const allowed = new Set(centers.map((r) => Number(r.id)));
+    const outsiders = agents.filter(
+      (a) => !a.callCenterId || !allowed.has(Number(a.callCenterId))
+    );
+    if (outsiders.length) {
+      const err = new Error(
+        'All selected agents must belong to a call center in your region'
+      );
+      err.code = 'VALIDATION';
+      throw err;
+    }
+    return;
+  }
   const requiredCenter =
     scope.mode === 'center' ? scope.callCenterId : fileClientCallCenterId;
   if (!requiredCenter) return;
@@ -81,6 +137,7 @@ async function listClientCaseSummary({ search = '', user = null } = {}) {
   }
 
   let centerId = null;
+  let regionId = null;
   if (user) {
     const scope = resolveCallCenterScope(user);
     if (scope.mode === 'center') {
@@ -88,21 +145,34 @@ async function listClientCaseSummary({ search = '', user = null } = {}) {
       centerId = scope.callCenterId;
       where += ' AND c.call_center_id = ?';
       params.push(scope.callCenterId);
+    } else if (scope.mode === 'region') {
+      if (!scope.regionId) return [];
+      regionId = scope.regionId;
+      where += ` AND c.call_center_id IN (${sqlCentersInRegion()})`;
+      params.push(scope.regionId);
     } else if (scope.mode === 'none') {
       return [];
     }
   }
 
-  // When center-scoped, count only files/debtors bound to that center
+  // When center/region-scoped, count only files/debtors bound to that scope
   // (file center preferred; legacy client bind when file has no center).
-  const fileCenterSql = centerId
-    ? ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c2.call_center_id = ?))'
-    : '';
-  const debtorCenterSql = centerId
-    ? ' AND COALESCE(df.call_center_id, c2.call_center_id) = ?'
-    : '';
-  const fileParams = centerId ? [centerId, centerId] : [];
-  const debtorParams = centerId ? [centerId] : [];
+  let fileCenterSql = '';
+  let debtorCenterSql = '';
+  let fileParams = [];
+  let debtorParams = [];
+  if (centerId) {
+    fileCenterSql =
+      ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c2.call_center_id = ?))';
+    debtorCenterSql = ' AND COALESCE(df.call_center_id, c2.call_center_id) = ?';
+    fileParams = [centerId, centerId];
+    debtorParams = [centerId];
+  } else if (regionId) {
+    fileCenterSql = ` AND COALESCE(df.call_center_id, c2.call_center_id) IN (${sqlCentersInRegion()})`;
+    debtorCenterSql = ` AND COALESCE(df.call_center_id, c2.call_center_id) IN (${sqlCentersInRegion()})`;
+    fileParams = [regionId];
+    debtorParams = [regionId];
+  }
 
   const [rows] = await pool.query(
     `SELECT c.id,
@@ -163,6 +233,9 @@ async function listClientFiles(clientId, { user = null } = {}) {
       centerClause =
         ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))';
       params.push(scope.callCenterId, scope.callCenterId);
+    } else if (scope.mode === 'region' && scope.regionId) {
+      centerClause = ` AND COALESCE(df.call_center_id, c.call_center_id) IN (${sqlCentersInRegion()})`;
+      params.push(scope.regionId);
     }
   }
 
@@ -243,6 +316,10 @@ async function listUnassignedFiles({ search = '', user = null } = {}) {
       centerClause =
         ' AND (df.call_center_id = ? OR (df.call_center_id IS NULL AND c.call_center_id = ?))';
       params.push(scope.callCenterId, scope.callCenterId);
+    } else if (scope.mode === 'region') {
+      if (!scope.regionId) return [];
+      centerClause = ` AND COALESCE(df.call_center_id, c.call_center_id) IN (${sqlCentersInRegion()})`;
+      params.push(scope.regionId);
     } else if (scope.mode === 'none') {
       return [];
     }

@@ -193,8 +193,8 @@ function ClientCombobox({ clients, value, onChange, disabled, loading }) {
 }
 
 function DebtorBulkUploadModal({ open, onClose, onCompleted }) {
-  const { isSystemAdmin, isSeniorSupervisor } = usePermissions();
-  const canPickCallCenter = isSystemAdmin || isSeniorSupervisor;
+  const { isSystemAdmin, isSeniorSupervisor, isRegionalManager } = usePermissions();
+  const canPickCallCenter = isSystemAdmin || isSeniorSupervisor || isRegionalManager;
 
   const [file, setFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);

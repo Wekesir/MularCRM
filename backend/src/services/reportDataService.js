@@ -6,7 +6,9 @@ const {
   AGENT_ROLE_NAMES,
   isAgentRole,
   isSupervisorRole,
+  isRegionalManagerRole,
   resolveCallCenterScope,
+  sqlCentersInRegion,
 } = require('../config/orgRoles');
 
 const REPORT_SLUGS = new Set([
@@ -67,13 +69,36 @@ function summarize(items) {
   }));
 }
 
-function seriesBar(id, title, labels, data, datasetLabel = 'Value') {
+function seriesBar(id, title, labels, data, datasetLabel = 'Value', extra = {}) {
   return {
     id,
     type: 'bar',
     title,
     labels,
     datasets: [{ label: datasetLabel, data }],
+    ...extra,
+  };
+}
+
+function seriesStackedBar(id, title, labels, datasets, extra = {}) {
+  return {
+    id,
+    type: 'stacked-bar',
+    title,
+    labels,
+    datasets,
+    ...extra,
+  };
+}
+
+function seriesRadar(id, title, labels, datasets, extra = {}) {
+  return {
+    id,
+    type: 'radar',
+    title,
+    labels,
+    datasets,
+    ...extra,
   };
 }
 
@@ -87,14 +112,22 @@ function seriesLine(id, title, labels, data, datasetLabel = 'Value') {
   };
 }
 
-function seriesDoughnut(id, title, labels, data) {
+function seriesDoughnut(id, title, labels, data, extra = {}) {
   return {
     id,
     type: 'doughnut',
     title,
     labels,
     datasets: [{ label: title, data }],
+    ...extra,
   };
+}
+
+function normalizeMetricRows(rows, keys) {
+  const maxes = keys.map((key) => Math.max(1, ...rows.map((row) => toNumber(row[key]))));
+  return rows.map((row) =>
+    keys.map((key, index) => Math.round((toNumber(row[key]) / maxes[index]) * 100))
+  );
 }
 
 function wrapResult(slug, filters, { summary, series, columns, rows, total, page, pageSize, hasMore }) {
@@ -321,11 +354,14 @@ function buildDebtorSummaryWhere(filters, viewer) {
  * Supervisors stay center-scoped; agents see only their own rows.
  */
 function resolveReportScope(viewer, filters = {}) {
-  if (!viewer) return { mode: 'none', callCenterId: null };
+  if (!viewer) return { mode: 'none', callCenterId: null, regionId: null };
   if (isAgentRole(viewer) && !viewer.isSystemAdmin) {
-    return { mode: 'agent', callCenterId: null };
+    return { mode: 'agent', callCenterId: null, regionId: null };
   }
-  if (isSupervisorRole(viewer) && !viewer.isSystemAdmin) {
+  if (
+    (isSupervisorRole(viewer) || isRegionalManagerRole(viewer)) &&
+    !viewer.isSystemAdmin
+  ) {
     return resolveCallCenterScope(viewer, { callCenterId: filters.callCenterId });
   }
   const id =
@@ -335,6 +371,7 @@ function resolveReportScope(viewer, filters = {}) {
   return {
     mode: 'company',
     callCenterId: Number.isFinite(id) ? id : null,
+    regionId: null,
   };
 }
 
@@ -365,6 +402,18 @@ function buildScope({
     }
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) {
+      clauses.push('1=0');
+    } else if (scope.callCenterId) {
+      clauses.push(`${aliasC}.call_center_id = ?`);
+      params.push(scope.callCenterId);
+      clauses.push(`${aliasC}.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`${aliasC}.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) {
       clauses.push('1=0');
@@ -408,7 +457,18 @@ function applyUserCenterScope(clauses, params, viewer, filters, userAlias = 'u')
     clauses.push('1=0');
     return scope;
   }
-  if (scope.mode === 'center') {
+  if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push(`${userAlias}.call_center_id = ?`);
+      params.push(scope.callCenterId);
+      clauses.push(`${userAlias}.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`${userAlias}.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
+  } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
       clauses.push(`${userAlias}.call_center_id = ?`);
@@ -645,6 +705,17 @@ async function paymentPerformance(filters, viewer) {
     params.push(Number(viewer.id), String(viewer.name || ''));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('c.call_center_id = ?');
+      params.push(scope.callCenterId);
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
@@ -869,6 +940,35 @@ async function collectorPerformance(filters, viewer) {
     setCachedKpi(cacheKey, kpi);
   }
 
+  const topCollectors = mapped.slice(0, 8);
+  const radarSource = mapped.slice(0, 5);
+  const radarKeys = ['collected', 'recovery', 'calls', 'sms', 'ptpCount'];
+  const radarValues = normalizeMetricRows(radarSource, radarKeys);
+  const collectorSeries = [
+    seriesBar(
+      'topCollected',
+      'Top collectors by amount collected',
+      topCollectors.map((r) => r.agent),
+      topCollectors.map((r) => r.collected),
+      'Collected',
+      { indexAxis: 'y', description: 'Current page · ranked by collected' }
+    ),
+  ];
+  if (radarSource.length >= 2) {
+    collectorSeries.push(
+      seriesRadar(
+        'collectorProfile',
+        'Collector activity profile',
+        ['Collected', 'Recovery %', 'Calls', 'SMS', 'PTP'],
+        radarSource.map((row, index) => ({
+          label: row.agent,
+          data: radarValues[index],
+        })),
+        { description: 'Normalized 0–100 across top collectors on this page' }
+      )
+    );
+  }
+
   return wrapResult('collector-performance', applied, {
     summary: [
       { key: 'agents', label: 'Collectors', value: kpi.agents },
@@ -876,7 +976,7 @@ async function collectorPerformance(filters, viewer) {
       { key: 'avgRecovery', label: 'Avg recovery %', value: kpi.avgRecovery, format: 'percent' },
       { key: 'ptp', label: 'PTPs (period)', value: kpi.totalPtp },
     ],
-    series: [],
+    series: collectorSeries,
     columns: [
       { key: 'rank', label: 'Rank' },
       { key: 'agent', label: 'Agent' },
@@ -994,6 +1094,9 @@ async function portfolioPerformance(filters, viewer) {
     };
   });
 
+  const portfolioLabels = mapped.map((r) => r.client).slice(0, 12);
+  const portfolioSlice = mapped.slice(0, 12);
+
   return wrapResult('portfolio-performance', filters, {
     summary: [
       { key: 'clients', label: 'Clients', value: kpi.clients },
@@ -1001,7 +1104,18 @@ async function portfolioPerformance(filters, viewer) {
       { key: 'recovery', label: 'Recovery %', value: pct(kpi.collected, kpi.loanTotal), format: 'percent' },
       { key: 'unassigned', label: 'Unassigned cases', value: kpi.unassigned },
     ],
-    series: [],
+    series: [
+      seriesStackedBar(
+        'assignmentMix',
+        'Assignment mix by client',
+        portfolioLabels,
+        [
+          { label: 'Assigned', data: portfolioSlice.map((r) => r.assigned) },
+          { label: 'Unassigned', data: portfolioSlice.map((r) => r.unassigned) },
+        ],
+        { description: 'Cases assigned vs still unassigned' }
+      ),
+    ],
     columns: [
       { key: 'client', label: 'Client' },
       { key: 'cases', label: 'Cases', format: 'number' },
@@ -1037,6 +1151,17 @@ async function promiseToPay(filters, viewer) {
     params.push(Number(viewer.id));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('c.call_center_id = ?');
+      params.push(scope.callCenterId);
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
@@ -1114,15 +1239,26 @@ async function promiseToPay(filters, viewer) {
   const broken = toNumber(totals.broken_count);
   const total = toNumber(totals.total);
 
+  const pending = toNumber(totals.pending_count);
+  const cancelled = toNumber(totals.cancelled_count);
+
   return wrapResult('promise-to-pay', applied, {
     summary: [
       { key: 'total', label: 'Arrangements', value: total },
       { key: 'promised', label: 'Promised', value: toNumber(totals.promised), format: 'money' },
-      { key: 'pending', label: 'Pending', value: toNumber(totals.pending_count) },
+      { key: 'pending', label: 'Pending', value: pending },
       { key: 'keepRate', label: 'Keep rate', value: pct(kept, kept + broken), format: 'percent' },
       { key: 'remindersDue', label: 'Reminders due', value: toNumber(totals.reminders_due) },
     ],
-    series: [],
+    series: [
+      seriesDoughnut(
+        'statusMix',
+        'PTP status mix',
+        ['Pending', 'Kept', 'Broken', 'Cancelled'],
+        [pending, kept, broken, cancelled],
+        { description: 'Share of arrangements by outcome' }
+      ),
+    ],
     columns: [
       { key: 'debtorName', label: 'Debtor' },
       { key: 'clientName', label: 'Client' },
@@ -1215,6 +1351,25 @@ async function agingReport(filters, viewer) {
     { key: 'debtors', label: 'Debtors', value: totalDebtors },
   ];
 
+  const agingSeries = [
+    seriesBar(
+      'outstandingByBucket',
+      'Outstanding by aging bucket',
+      labels,
+      labels.map((b) => toNumber(bucketMap.get(b)?.outstanding)),
+      'Outstanding',
+      { indexAxis: 'y', description: 'Book balance remaining in each DPD band' }
+    ),
+    seriesBar(
+      'debtorsByBucket',
+      'Debtors by aging bucket',
+      labels,
+      labels.map((b) => toNumber(bucketMap.get(b)?.debtors)),
+      'Debtors',
+      { description: 'Account count per DPD band' }
+    ),
+  ];
+
   // Default aging view: bucket rollup (the actual aging report).
   if (!detailView) {
     const allRows = labels.map((bucket) => {
@@ -1234,7 +1389,7 @@ async function agingReport(filters, viewer) {
     const pageRows = allRows.slice(offset, offset + pageSize);
     return wrapResult('aging-report', filters, {
       summary,
-      series: [],
+      series: agingSeries,
       columns: [
         { key: 'bucket', label: 'Bucket' },
         { key: 'debtors', label: 'Debtors', format: 'number' },
@@ -1274,7 +1429,7 @@ async function agingReport(filters, viewer) {
 
   return wrapResult('aging-report', filters, {
     summary,
-    series: [],
+    series: agingSeries,
     columns: [
       { key: 'name', label: 'Debtor' },
       { key: 'clientName', label: 'Client' },
@@ -1548,6 +1703,8 @@ async function recoveryRate(filters, viewer) {
     };
   });
 
+  const recoverySlice = mapped.slice(0, 12);
+
   return wrapResult('recovery-rate', applied, {
     summary: [
       { key: 'recovery', label: 'Overall recovery %', value: pct(kpi.collected, kpi.loanTotal), format: 'percent' },
@@ -1555,7 +1712,16 @@ async function recoveryRate(filters, viewer) {
       { key: 'outstanding', label: 'Outstanding', value: kpi.outstanding, format: 'money' },
       { key: 'period', label: 'Period collections', value: kpi.periodCollections, format: 'money' },
     ],
-    series: [],
+    series: [
+      seriesBar(
+        'recoveryByClient',
+        'Recovery rate by client',
+        recoverySlice.map((r) => r.client),
+        recoverySlice.map((r) => r.recovery),
+        'Recovery %',
+        { indexAxis: 'y', description: 'Collected ÷ loan book for clients on this page' }
+      ),
+    ],
     columns: [
       { key: 'client', label: 'Client' },
       { key: 'cases', label: 'Cases', format: 'number' },
@@ -1588,6 +1754,21 @@ async function goipCallsReport(filters, viewer) {
     params.push(Number(viewer.id));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('(u.call_center_id = ? OR c.call_center_id = ?)');
+      params.push(scope.callCenterId, scope.callCenterId);
+      clauses.push(
+        `(u.call_center_id IN (${sqlCentersInRegion()}) OR c.call_center_id IN (${sqlCentersInRegion()}))`
+      );
+      params.push(scope.regionId, scope.regionId);
+    } else {
+      clauses.push(
+        `(u.call_center_id IN (${sqlCentersInRegion()}) OR c.call_center_id IN (${sqlCentersInRegion()}))`
+      );
+      params.push(scope.regionId, scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
@@ -1734,6 +1915,17 @@ async function smsReport(filters, viewer) {
     params.push(Number(viewer.id));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('u.call_center_id = ?');
+      params.push(scope.callCenterId);
+      clauses.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`u.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
@@ -1859,6 +2051,17 @@ async function debtorNotes(filters, viewer) {
     params.push(Number(viewer.id));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('c.call_center_id = ?');
+      params.push(scope.callCenterId);
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {
@@ -1979,6 +2182,17 @@ async function contactAttempt(filters, viewer) {
     params.push(Number(viewer.id));
   } else if (scope.mode === 'none') {
     clauses.push('1=0');
+  } else if (scope.mode === 'region') {
+    if (!scope.regionId) clauses.push('1=0');
+    else if (scope.callCenterId) {
+      clauses.push('c.call_center_id = ?');
+      params.push(scope.callCenterId);
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    } else {
+      clauses.push(`c.call_center_id IN (${sqlCentersInRegion()})`);
+      params.push(scope.regionId);
+    }
   } else if (scope.mode === 'center') {
     if (!scope.callCenterId) clauses.push('1=0');
     else {

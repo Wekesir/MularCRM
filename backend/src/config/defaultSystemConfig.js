@@ -34,6 +34,12 @@ const DEFAULT_SYSTEM_CONFIG = {
     passType: CELCOM_AFRICA_SMS.DEFAULT_PASS_TYPE,
   },
   voice: {
+    /**
+     * System-wide active dialer for all outbound portfolio calls.
+     * yeastar | africastalking | '' (none). No auto-failover — admin switches manually.
+     */
+    activeProvider: '',
+    /** @deprecated Prefer activeProvider; kept for older saved configs */
     provider: '',
     username: '',
     apiKey: '',
@@ -42,6 +48,17 @@ const DEFAULT_SYSTEM_CONFIG = {
     /** Public base URL for AT voice webhooks (e.g. https://api.example.com) */
     callbackBaseUrl: '',
     recordCalls: true,
+    /** Public app URL for Yeastar call-popup deep links */
+    appBaseUrl: '',
+    yeastar: {
+      enabled: false,
+      baseUrl: '',
+      apiPath: 'openapi/v1.0',
+      clientId: '',
+      clientSecret: '',
+      /** Bearer key Yeastar PBX uses when calling OMNICRM Custom CRM APIs */
+      integrationApiKey: '',
+    },
   },
   auth: {
     otpOnLogin: true,

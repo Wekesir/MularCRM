@@ -198,6 +198,7 @@ async function pullLivePaymentsForClient(clientConfig, {
     debtCategoryId: clientConfig.debtCategoryId != null ? Number(clientConfig.debtCategoryId) || null : null,
     debtTypeId: clientConfig.debtTypeId != null ? Number(clientConfig.debtTypeId) || null : null,
     currencyId: clientConfig.currencyId != null ? Number(clientConfig.currencyId) || null : null,
+    regionId: clientConfig.regionId != null ? Number(clientConfig.regionId) || null : null,
     userId,
     fileId,
     cfid,

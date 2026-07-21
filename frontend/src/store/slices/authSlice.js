@@ -19,6 +19,7 @@ const emptyUser = {
   name: '',
   email: '',
   avatar: '',
+  yeastarExtension: null,
 };
 
 const defaultSession = {
@@ -33,6 +34,8 @@ const initialState = {
   roleName: null,
   callCenterId: null,
   callCenterName: null,
+  regionId: null,
+  regionName: null,
   isSystemAdmin: false,
   mustResetPassword: false,
   permissions: null,
@@ -150,6 +153,8 @@ function applyAuthSuccess(state, payload) {
   state.roleName = payload.user.roleName || payload.roleName || null;
   state.callCenterId = payload.user.callCenterId ?? payload.callCenterId ?? null;
   state.callCenterName = payload.user.callCenterName ?? payload.callCenterName ?? null;
+  state.regionId = payload.user.regionId ?? payload.regionId ?? null;
+  state.regionName = payload.user.regionName ?? payload.regionName ?? null;
   state.isSystemAdmin = payload.isSystemAdmin;
   state.mustResetPassword = Boolean(payload.user.mustResetPassword);
   state.permissions = payload.permissions;
@@ -176,6 +181,8 @@ const authSlice = createSlice({
       state.roleName = null;
       state.callCenterId = null;
       state.callCenterName = null;
+      state.regionId = null;
+      state.regionName = null;
       state.isSystemAdmin = false;
       state.mustResetPassword = false;
       state.permissions = null;
@@ -192,6 +199,8 @@ const authSlice = createSlice({
       state.roleName = null;
       state.callCenterId = null;
       state.callCenterName = null;
+      state.regionId = null;
+      state.regionName = null;
       state.isSystemAdmin = false;
       state.mustResetPassword = false;
       state.permissions = null;
@@ -221,6 +230,8 @@ const authSlice = createSlice({
         state.roleName = incoming.roleName ?? null;
         state.callCenterId = incoming.callCenterId ?? null;
         state.callCenterName = incoming.callCenterName ?? null;
+        state.regionId = incoming.regionId ?? null;
+        state.regionName = incoming.regionName ?? null;
         state.isSystemAdmin = incoming.isSystemAdmin ?? false;
         state.mustResetPassword = incoming.mustResetPassword ?? false;
         state.permissions = incoming.permissions ?? null;
@@ -297,6 +308,8 @@ const authSlice = createSlice({
         state.roleName = action.payload.roleName || null;
         state.callCenterId = action.payload.callCenterId ?? null;
         state.callCenterName = action.payload.callCenterName ?? null;
+        state.regionId = action.payload.regionId ?? null;
+        state.regionName = action.payload.regionName ?? null;
         state.isSystemAdmin = action.payload.isSystemAdmin;
         state.mustResetPassword = Boolean(action.payload.mustResetPassword);
         state.session.isAuthenticated = true;
@@ -308,6 +321,8 @@ const authSlice = createSlice({
         state.roleName = null;
         state.callCenterId = null;
         state.callCenterName = null;
+        state.regionId = null;
+        state.regionName = null;
         state.isSystemAdmin = false;
         state.mustResetPassword = false;
         state.permissions = null;

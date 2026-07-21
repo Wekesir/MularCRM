@@ -82,6 +82,7 @@ export const sidebarNav = [
       { path: '/settings/commission-rates', label: 'Commission Rates' },
       { path: '/settings/debt-type', label: 'Debt Type' },
       { path: '/settings/debt-category', label: 'Debt Category' },
+      { path: '/settings/regions', label: 'Regions' },
       { path: '/settings/client-type', label: 'Client Type' },
       { path: '/settings/debtor-upload-rules', label: 'Debtor Upload Rules' },
       { path: '/settings/currency', label: 'Currency' },

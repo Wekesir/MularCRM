@@ -18,7 +18,9 @@ import {
   fetchPortfolioActivity,
   startPortfolioCall,
 } from '../api/agentPortfolio';
+import { fetchActiveDialer } from '../api/systemConfig';
 import { useSystemConfig } from '../context/SystemConfigContext';
+import { useAppSelector } from '../store/hooks';
 
 const ACTIVITY_TABS = [
   { key: 'all', label: 'All' },
@@ -109,6 +111,9 @@ function PortfolioCaseWorkspace({
   onRestructure,
 }) {
   const { currencySymbol } = useSystemConfig();
+  const yeastarExtension = useAppSelector(
+    (state) => state.auth.user?.yeastarExtension || null
+  );
   const [channelTab, setChannelTab] = useState('all');
   const [allActivity, setAllActivity] = useState([]);
   const [debtorMeta, setDebtorMeta] = useState(null);
@@ -117,6 +122,7 @@ function PortfolioCaseWorkspace({
   const [simCardId, setSimCardId] = useState('');
   const [calling, setCalling] = useState(false);
   const [callHint, setCallHint] = useState('');
+  const [activeDialer, setActiveDialer] = useState(null);
 
   const loadActivity = useCallback(async () => {
     if (!debtor?.id) return;
@@ -137,6 +143,9 @@ function PortfolioCaseWorkspace({
     if (!open || !debtor?.id) return undefined;
     setChannelTab('all');
     setCallHint('');
+    fetchActiveDialer()
+      .then(setActiveDialer)
+      .catch(() => setActiveDialer(null));
     fetchAgentSimCards()
       .then((rows) => {
         setSims(rows.filter((s) => s.isActive && s.supportsOutbound));
@@ -175,21 +184,39 @@ function PortfolioCaseWorkspace({
   const meta = debtorMeta || debtor;
   const outboundSims = sims;
 
+  const dialerProvider = activeDialer?.activeProvider || null;
+  const dialerLabel = activeDialer?.label || 'None';
+  const isYeastarActive = dialerProvider === 'yeastar';
+  const isAtActive = dialerProvider === 'africastalking';
+  const canCallViaYeastar = isYeastarActive && Boolean(yeastarExtension);
+  const canCallViaSim = isAtActive && Boolean(simCardId);
+  const canPlaceCall = isYeastarActive ? canCallViaYeastar : isAtActive ? canCallViaSim : false;
+
   const handleCall = async () => {
     if (!meta.phone) {
       toast.error('Debtor has no phone number');
       return;
     }
-    if (!simCardId) {
-      toast.error('Add an outbound SIM under Profile → SIM Cards first');
+    if (!dialerProvider) {
+      toast.error('No active dialer is configured. Contact a system administrator.');
+      return;
+    }
+    if (isYeastarActive && !yeastarExtension) {
+      toast.error('No Yeastar extension assigned. Ask an admin to set it on your user profile.');
+      return;
+    }
+    if (isAtActive && !canCallViaSim) {
+      toast.error('Add an outbound SIM under Profile → SIM Cards before placing calls.');
       return;
     }
     setCalling(true);
     setCallHint('');
     try {
-      const result = await startPortfolioCall(debtor.id, { simCardId: Number(simCardId) });
+      const payload = isAtActive && simCardId ? { simCardId: Number(simCardId) } : {};
+      const result = await startPortfolioCall(debtor.id, payload);
+      const via = result.dialerLabel || dialerLabel;
       setCallHint(result.next || 'Answer your phone to connect with the debtor.');
-      toast.success('Call started — answer your phone');
+      toast.success(`Call started via ${via}`);
       loadActivity();
       onLogResponse?.(debtor, 'call');
     } catch (error) {
@@ -276,35 +303,61 @@ function PortfolioCaseWorkspace({
 
             <div className="pcw-col-label">Reach out</div>
             <div className="pcw-actions-card">
-              <div className="pcw-sim-field">
-                <label className="pcw-sim-label" htmlFor="pcw-sim">
-                  Outbound SIM
-                </label>
-                <select
-                  id="pcw-sim"
-                  className="pcw-select"
-                  value={simCardId}
-                  onChange={(e) => setSimCardId(e.target.value)}
-                  disabled={calling || outboundSims.length === 0}
-                >
-                  {outboundSims.length === 0 ? (
-                    <option value="">No SIM registered</option>
-                  ) : (
-                    outboundSims.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label} · {s.phoneNumber}
-                      </option>
-                    ))
-                  )}
-                </select>
+              <div className="pcw-dialer-badge" role="status">
+                <Phone className="icon-sm" aria-hidden="true" />
+                <div className="pcw-dialer-badge-text">
+                  <span className="pcw-dialer-badge-label">Active dialer</span>
+                  <strong className="pcw-dialer-badge-value">
+                    {activeDialer == null ? 'Loading…' : dialerLabel}
+                  </strong>
+                </div>
               </div>
+
+              {isAtActive ? (
+                <div className="pcw-sim-field">
+                  <label className="pcw-sim-label" htmlFor="pcw-sim">
+                    Outbound SIM
+                  </label>
+                  <select
+                    id="pcw-sim"
+                    className="pcw-select"
+                    value={simCardId}
+                    onChange={(e) => setSimCardId(e.target.value)}
+                    disabled={calling || outboundSims.length === 0}
+                  >
+                    {outboundSims.length === 0 ? (
+                      <option value="">No SIM registered</option>
+                    ) : (
+                      outboundSims.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label} · {s.phoneNumber}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              ) : null}
+
+              {isYeastarActive ? (
+                <p className="pcw-call-hint" style={{ marginTop: 0 }}>
+                  {yeastarExtension
+                    ? `Calling from Yeastar extension ${yeastarExtension}`
+                    : 'No Yeastar extension on your profile — ask an admin to assign one.'}
+                </p>
+              ) : null}
+
+              {!dialerProvider && activeDialer != null ? (
+                <p className="pcw-call-hint" style={{ marginTop: 0 }}>
+                  No system dialer is active. A system admin must choose one under Communication.
+                </p>
+              ) : null}
 
               <div className="pcw-action-grid">
                 <button
                   type="button"
                   className="pcw-action-btn pcw-action-btn--primary"
                   onClick={handleCall}
-                  disabled={calling || !meta.phone || !simCardId}
+                  disabled={calling || !meta.phone || !canPlaceCall}
                 >
                   {calling ? <Loader2 className="icon-sm animate-spin" /> : <Phone className="icon-sm" />}
                   {calling ? 'Calling…' : 'Call'}

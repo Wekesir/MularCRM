@@ -8,7 +8,7 @@ function buildFilterParams(filters = {}) {
     'assignmentStatus', 'closed', 'ptp', 'discounted',
     'dpdMin', 'dpdMax', 'balanceMin', 'balanceMax',
     'lastContactedFrom', 'lastContactedTo', 'nextActionFrom', 'nextActionTo',
-    'search',
+    'search', 'regionId',
   ];
   for (const k of keys) {
     const v = filters[k];

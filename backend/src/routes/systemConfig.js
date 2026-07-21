@@ -1,8 +1,10 @@
 const express = require('express');
 const { getSystemConfig, updateSystemConfig } = require('../services/systemConfigService');
 const { getSmsBalance, sendTestSms } = require('../services/smsService');
+const { getActiveDialerStatus, testOutboundCall } = require('../services/dialerService');
 const { recordActivityEvent } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
+const { requireSystemAdmin } = require('../middleware/requireSystemAdmin');
 
 const router = express.Router();
 
@@ -125,6 +127,42 @@ router.post('/sms/test', requireAuth, async (req, res) => {
   } catch (error) {
     res.status(error.status || 500).json({
       message: error.message || 'Failed to send test SMS',
+      code: error.code,
+    });
+  }
+});
+
+/** Active dialer status — safe for all authenticated users (no secrets). */
+router.get('/voice/active', requireAuth, async (_req, res) => {
+  try {
+    const status = await getActiveDialerStatus();
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to load active dialer', detail: error.message });
+  }
+});
+
+/** Place a test call through the chosen dialer (system admin only). */
+router.post('/voice/test', requireAuth, requireSystemAdmin, async (req, res) => {
+  try {
+    const result = await testOutboundCall(req.user, req.body || {});
+    recordActivityEvent({
+      userId: req.user?.id,
+      userName: req.user?.name,
+      actionType: 'config.voice.test',
+      title: 'Voice Dialer Test Call',
+      subject: result.dialerLabel || 'Voice',
+      entityType: 'system_config',
+      entityId: '1',
+      metadata: {
+        dialerProvider: result.dialerProvider,
+        voiceCallId: result.call?.id,
+      },
+    }).catch(() => {});
+    res.json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'Failed to place test call',
       code: error.code,
     });
   }

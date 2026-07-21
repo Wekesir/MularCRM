@@ -130,7 +130,15 @@ function normalizeRowObject(raw) {
   return cellsMap;
 }
 
-function buildCandidateFromCells(cellsMap, { clientId, cfid, fileId, debtCategoryId, debtTypeId, currencyId }) {
+function buildCandidateFromCells(cellsMap, {
+  clientId,
+  cfid,
+  fileId,
+  debtCategoryId,
+  debtTypeId,
+  currencyId,
+  regionId,
+}) {
   const dpd = parseInt(parseNumber(cellsMap.dpdLevel), 10) || 0;
   return {
     name: cellsMap.fullName,
@@ -173,6 +181,7 @@ function buildCandidateFromCells(cellsMap, { clientId, cfid, fileId, debtCategor
     debtCategoryId,
     debtTypeId,
     currencyId,
+    regionId,
   };
 }
 
@@ -186,6 +195,7 @@ async function importDebtorRows(rows, {
   debtCategoryId = null,
   debtTypeId = null,
   currencyId = null,
+  regionId = null,
   userId = null,
   fileId,
   cfid,
@@ -247,6 +257,7 @@ async function importDebtorRows(rows, {
         debtCategoryId,
         debtTypeId,
         currencyId,
+        regionId,
       }),
     });
   }

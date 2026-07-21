@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Building2,
   FileStack,
+  PieChart,
   RefreshCw,
   Users,
   Wallet,
@@ -16,8 +17,18 @@ import { toast } from 'react-toastify';
 import { fetchOrgDashboard } from '../../api/dashboard';
 import StatCard from '../../components/StatCard';
 import SectionHeader from '../../components/SectionHeader';
+import {
+  Bar,
+  ChartCard,
+  Doughnut,
+  abbreviateNumber,
+  createChartDataset,
+  getChartPalette,
+  useChartOptions,
+} from '../../components/charts';
 import { usePageActions } from '../../context/PageActionsContext';
 import { useSystemConfig } from '../../context/SystemConfigContext';
+import { useTheme } from '../../context/ThemeContext';
 import { usePermissions } from '../../hooks/usePermissions';
 
 function formatCount(n) {
@@ -30,7 +41,8 @@ function formatMoney(n, symbol = 'KES') {
 
 function SupervisorDashboard() {
   const { setActions } = usePageActions();
-  const { currencySymbol } = useSystemConfig();
+  const { currencySymbol, themeColor } = useSystemConfig();
+  const { colorMode } = useTheme();
   const { callCenterName } = usePermissions();
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -62,6 +74,60 @@ function SupervisorDashboard() {
 
   const summary = data?.summary || {};
   const centerLabel = data?.callCenter?.name || callCenterName || 'Your call center';
+  const newBatches = data?.newBatches || [];
+  const agents = data?.agents || [];
+  const hasNewBatches = newBatches.length > 0;
+  const assignedCases = Number(summary.assignedCases) || 0;
+  const unassignedCases = Number(summary.unassignedCases) || 0;
+
+  const assignmentData = useMemo(() => {
+    const palette = getChartPalette();
+    return {
+      labels: ['Assigned', 'Unassigned'],
+      datasets: [
+        {
+          data: [assignedCases, unassignedCases],
+          backgroundColor: [palette[0], '#f59e0b'],
+          borderColor: 'transparent',
+          borderWidth: 0,
+          hoverOffset: 6,
+          spacing: 2,
+        },
+      ],
+    };
+  }, [assignedCases, unassignedCases, colorMode, themeColor]);
+
+  const agentLoadData = useMemo(() => {
+    const top = [...agents]
+      .sort((a, b) => Number(b.casesAssigned || 0) - Number(a.casesAssigned || 0))
+      .slice(0, 8);
+    return {
+      labels: top.map((a) => a.name),
+      datasets: [
+        createChartDataset({
+          label: 'Cases',
+          data: top.map((a) => Number(a.casesAssigned) || 0),
+          type: 'bar',
+          colorIndex: 4,
+        }),
+      ],
+      _count: top.length,
+    };
+  }, [agents, colorMode, themeColor]);
+
+  const doughnutOptions = useChartOptions({
+    scales: false,
+    cutout: '68%',
+    plugins: { legend: { position: 'bottom' } },
+  });
+
+  const agentLoadOptions = useChartOptions({
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { callback: (value) => abbreviateNumber(value) } },
+    },
+  });
 
   if (isLoading && !data) {
     return (
@@ -87,10 +153,6 @@ function SupervisorDashboard() {
       </div>
     );
   }
-
-  const newBatches = data?.newBatches || [];
-  const agents = data?.agents || [];
-  const hasNewBatches = newBatches.length > 0;
 
   return (
     <div className="dashboard-page space-y-8">
@@ -158,6 +220,35 @@ function SupervisorDashboard() {
           accent="#10b981"
         />
       </section>
+
+      {(assignedCases > 0 || unassignedCases > 0 || agentLoadData._count > 0) && (
+        <section className="chart-grid chart-grid-2" aria-label="Call center charts">
+          {(assignedCases > 0 || unassignedCases > 0) && (
+            <ChartCard
+              title="Case assignment"
+              description="Assigned vs awaiting allocation"
+              icon={PieChart}
+              badge="Donut"
+              accent="var(--theme-color)"
+              height={280}
+            >
+              <Doughnut data={assignmentData} options={doughnutOptions} />
+            </ChartCard>
+          )}
+          {agentLoadData._count > 0 && (
+            <ChartCard
+              title="Agent caseload"
+              description="Open cases per agent"
+              icon={UserCog}
+              badge="Bar"
+              accent="#8b5cf6"
+              height={Math.max(240, agentLoadData._count * 34 + 48)}
+            >
+              <Bar data={agentLoadData} options={agentLoadOptions} />
+            </ChartCard>
+          )}
+        </section>
+      )}
 
       {/* New / unallocated batches */}
       <section className="cm-table-card">

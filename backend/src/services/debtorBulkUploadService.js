@@ -10,7 +10,7 @@ const {
   importDebtorRows,
 } = require('./debtorImportShared');
 const { getClientById, assignClientCallCenter } = require('./clientService');
-const { isSeniorSupervisorRole } = require('../config/orgRoles');
+const { isSeniorSupervisorRole, isRegionalManagerRole } = require('../config/orgRoles');
 const { recordActivityEvent } = require('./activityService');
 
 const TEMPLATE_FILENAME = 'debtor-upload-template.csv';
@@ -63,7 +63,9 @@ async function resolveUploadCallCenter({
     // Client already bound — keep that center unless Senior/Admin forces override.
     const canForce =
       Boolean(forceOverride) &&
-      (Boolean(performedBy?.isSystemAdmin) || isSeniorSupervisorRole(performedBy));
+      (Boolean(performedBy?.isSystemAdmin) ||
+        isSeniorSupervisorRole(performedBy) ||
+        isRegionalManagerRole(performedBy));
     if (canForce) {
       resolvedCenterId = requestedCenterId;
     }

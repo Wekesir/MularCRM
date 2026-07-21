@@ -20,7 +20,7 @@ const {
 const { recordActivityEvent } = require('../services/activityService');
 const { requireAuth } = require('../middleware/requireAuth');
 const { getUserEffectivePermissions } = require('../services/userService');
-const { isSeniorSupervisorRole } = require('../config/orgRoles');
+const { isSeniorSupervisorRole, isRegionalManagerRole } = require('../config/orgRoles');
 
 const router = express.Router();
 
@@ -32,7 +32,7 @@ async function assertCanManageClients(user, action) {
     err.status = 401;
     throw err;
   }
-  if (user.isSystemAdmin || isSeniorSupervisorRole(user)) return;
+  if (user.isSystemAdmin || isSeniorSupervisorRole(user) || isRegionalManagerRole(user)) return;
   const perms = await getUserEffectivePermissions(user.id);
   const node = perms?.management?.client_management;
   if (action === 'create' && node?.create) return;
