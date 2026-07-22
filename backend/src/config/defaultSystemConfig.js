@@ -79,8 +79,16 @@ const DEFAULT_SYSTEM_CONFIG = {
     googleDrive: {
       folderId: '',
       serviceAccountEmail: '',
+      ownerEmail: '',
       serviceAccountKey: '',
+      // OAuth app credentials (Web client) used to auto-accept ownership as the Gmail owner.
+      oauthClientId: '',
+      oauthClientSecret: '',
+      oauthRefreshToken: '',
+      oauthConnectedEmail: '',
     },
+    // Persisted across restarts so "Complete upload" can stream into the empty stub.
+    pendingUpload: null,
   },
   integrations: {
     livePayments: {

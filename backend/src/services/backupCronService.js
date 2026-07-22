@@ -1,6 +1,9 @@
 const cron = require('node-cron');
 const { getSystemConfig } = require('./systemConfigService');
-const { runDatabaseBackup } = require('./databaseBackupService');
+const {
+  runDatabaseBackup,
+  getLastBackupStatus,
+} = require('./databaseBackupService');
 
 const FREQUENCY_CRON = {
   daily: '0 2 * * *',
@@ -28,13 +31,36 @@ async function executeScheduledBackup() {
       return;
     }
 
-    if (!backup.googleDrive?.folderId || !backup.googleDrive?.serviceAccountKey) {
+    if (
+      !backup.googleDrive?.folderId ||
+      !backup.googleDrive?.serviceAccountKey ||
+      !backup.googleDrive?.ownerEmail
+    ) {
       console.warn('[backup-cron] skipped — Google Drive is not fully configured');
       return;
     }
 
-    await runDatabaseBackup({ triggeredBy: 'cron' });
+    const lastRun = await getLastBackupStatus();
+    // Avoid stacking empty stubs while a previous ownership invite is unanswered.
+    // runDatabaseBackup will finalize if ownership was accepted, or re-signal pending.
+    if (lastRun.awaitingOwnership && lastRun.driveFileId) {
+      console.info(
+        `[backup-cron] resuming pending backup file ${lastRun.driveFileId} (awaiting ownership or finalize)`
+      );
+    }
+
+    const result = await runDatabaseBackup({ triggeredBy: 'cron' });
+    if (result?.awaitingOwnership) {
+      console.warn(
+        `[backup-cron] backup file created but ownership still pending for ${result.ownerEmail}. ` +
+          'Accept ownership in Drive before the next successful upload. No additional stub will be created until then.'
+      );
+    }
   } catch (error) {
+    if (error.awaitingOwnership) {
+      console.warn(`[backup-cron] still awaiting ownership: ${error.message}`);
+      return;
+    }
     console.error('[backup-cron] run failed:', error.message);
   }
 }

@@ -8,16 +8,26 @@ import {
   Database,
   FileText,
   FolderOpen,
+  Hourglass,
   KeyRound,
+  Link2,
+  Link2Off,
   Loader2,
+  Mail,
   Play,
   RefreshCw,
   Shield,
   Timer,
+  Upload,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LoadingButton from '../../components/LoadingButton';
-import { fetchBackupStatus, runBackupNow } from '../../api/backup';
+import {
+  disconnectBackupGoogle,
+  fetchBackupGoogleAuthUrl,
+  fetchBackupStatus,
+  runBackupNow,
+} from '../../api/backup';
 import { useSystemConfig } from '../../context/SystemConfigContext';
 
 const FREQUENCY_OPTIONS = [
@@ -32,8 +42,14 @@ const EMPTY_BACKUP = {
   googleDrive: {
     folderId: '',
     serviceAccountEmail: '',
+    ownerEmail: '',
     serviceAccountKey: '',
     serviceAccountKeySet: false,
+    oauthClientId: '',
+    oauthClientSecret: '',
+    oauthClientSecretSet: false,
+    oauthRefreshTokenSet: false,
+    oauthConnectedEmail: '',
   },
 };
 
@@ -49,12 +65,20 @@ function formatWhen(value) {
   }
 }
 
-function StatusBadge({ ok, running }) {
+function StatusBadge({ ok, running, awaitingOwnership }) {
   if (running) {
     return (
       <span className="bk-badge bk-badge--running">
         <Loader2 className="icon-sm bk-spin" aria-hidden="true" />
         Running
+      </span>
+    );
+  }
+  if (awaitingOwnership) {
+    return (
+      <span className="bk-badge bk-badge--awaiting">
+        <Hourglass className="icon-sm" aria-hidden="true" />
+        Awaiting ownership
       </span>
     );
   }
@@ -82,6 +106,8 @@ function DatabaseBackup() {
   const [form, setForm] = useState(EMPTY_BACKUP);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [status, setStatus] = useState(null);
 
@@ -115,6 +141,36 @@ function DatabaseBackup() {
     refreshStatus();
   }, [loadConfig, refreshStatus]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const google = params.get('google');
+    if (!google) return;
+
+    if (google === 'connected') {
+      toast.success('Google account connected — ownership will auto-accept on backups.');
+      refreshStatus(true);
+      loadConfig()
+        .then((config) => {
+          setForm({
+            ...EMPTY_BACKUP,
+            ...(config.backup || {}),
+            googleDrive: {
+              ...EMPTY_BACKUP.googleDrive,
+              ...(config.backup?.googleDrive || {}),
+            },
+          });
+        })
+        .catch(() => {});
+    } else if (google === 'error') {
+      toast.error(params.get('message') || 'Google connection failed');
+    }
+
+    params.delete('google');
+    params.delete('message');
+    const next = `${window.location.pathname}${params.toString() ? `?${params}` : ''}`;
+    window.history.replaceState({}, '', next);
+  }, [loadConfig, refreshStatus]);
+
   const updateBackup = (patch) => setForm((prev) => ({ ...prev, ...patch }));
   const updateDrive = (patch) =>
     setForm((prev) => ({ ...prev, googleDrive: { ...prev.googleDrive, ...patch } }));
@@ -130,7 +186,10 @@ function DatabaseBackup() {
           googleDrive: {
             folderId: form.googleDrive.folderId?.trim() || '',
             serviceAccountEmail: form.googleDrive.serviceAccountEmail?.trim() || '',
+            ownerEmail: form.googleDrive.ownerEmail?.trim() || '',
             serviceAccountKey: form.googleDrive.serviceAccountKey || '',
+            oauthClientId: form.googleDrive.oauthClientId?.trim() || '',
+            oauthClientSecret: form.googleDrive.oauthClientSecret || '',
           },
         },
       };
@@ -142,6 +201,7 @@ function DatabaseBackup() {
           ...EMPTY_BACKUP.googleDrive,
           ...(saved.backup?.googleDrive || {}),
           serviceAccountKey: '',
+          oauthClientSecret: '',
         },
       });
       toast.success('Backup settings saved');
@@ -157,25 +217,87 @@ function DatabaseBackup() {
     setRunning(true);
     try {
       const result = await runBackupNow();
-      toast.success(result.message || 'Backup completed');
+      if (result.awaitingOwnership) {
+        toast.info(result.message || 'Accept ownership in Drive, then complete the upload.');
+      } else {
+        toast.success(result.message || 'Backup completed');
+      }
       await refreshStatus(true);
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Backup failed');
+      const data = error.response?.data;
+      if (data?.awaitingOwnership || data?.lastRun?.awaitingOwnership) {
+        toast.info(data?.message || 'Accept ownership in Drive, then complete the upload.');
+      } else {
+        toast.error(data?.message || 'Backup failed');
+      }
       await refreshStatus(true);
     } finally {
       setRunning(false);
     }
   };
 
+  const handleConnectGoogle = async () => {
+    setConnecting(true);
+    try {
+      // Persist OAuth client fields first so the auth-url endpoint can use them.
+      await updateConfig({
+        backup: {
+          googleDrive: {
+            folderId: form.googleDrive.folderId?.trim() || '',
+            ownerEmail: form.googleDrive.ownerEmail?.trim() || '',
+            oauthClientId: form.googleDrive.oauthClientId?.trim() || '',
+            oauthClientSecret: form.googleDrive.oauthClientSecret || '',
+            serviceAccountEmail: form.googleDrive.serviceAccountEmail?.trim() || '',
+            serviceAccountKey: form.googleDrive.serviceAccountKey || '',
+          },
+        },
+      });
+      const { url } = await fetchBackupGoogleAuthUrl();
+      window.location.href = url;
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to start Google connection');
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    setDisconnecting(true);
+    try {
+      await disconnectBackupGoogle();
+      toast.success('Google account disconnected');
+      await refreshStatus(true);
+      const config = await loadConfig();
+      setForm({
+        ...EMPTY_BACKUP,
+        ...(config.backup || {}),
+        googleDrive: {
+          ...EMPTY_BACKUP.googleDrive,
+          ...(config.backup?.googleDrive || {}),
+          serviceAccountKey: '',
+          oauthClientSecret: '',
+        },
+      });
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to disconnect Google account');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   const lastRun = status?.lastRun;
   const cron = status?.cron;
+  const oauth = status?.oauth;
+  const awaitingOwnership = Boolean(lastRun?.awaitingOwnership);
+  const oauthConnected = Boolean(oauth?.connected || form.googleDrive?.oauthRefreshTokenSet);
   const keyPlaceholder = form.googleDrive?.serviceAccountKeySet
     ? 'Leave blank to keep the current service account key'
     : 'Paste the full Google service account JSON key here…';
+  const oauthSecretPlaceholder = form.googleDrive?.oauthClientSecretSet
+    ? 'Leave blank to keep the current OAuth client secret'
+    : 'OAuth client secret from Google Cloud Console';
 
   return (
     <div className="space-y-6 min-h-[50vh]">
-      {/* ── Status card ────────────────────────────────────── */}
       <div className="bk-status-card">
         <div className="bk-status-card-body">
           <div className="bk-status-card-top">
@@ -186,11 +308,28 @@ function DatabaseBackup() {
               <div>
                 <div className="bk-status-card-title-row">
                   <p className="bk-status-card-title">Last Backup</p>
-                  <StatusBadge ok={lastRun?.ok} running={lastRun?.running} />
+                  <StatusBadge
+                    ok={lastRun?.ok}
+                    running={lastRun?.running}
+                    awaitingOwnership={awaitingOwnership && !oauthConnected}
+                  />
                 </div>
                 <p className="bk-status-card-desc">
                   {statusLoading ? 'Loading…' : (lastRun?.message || 'No backup has run yet')}
                 </p>
+                {awaitingOwnership && !oauthConnected && (
+                  <p className="bk-status-card-desc" style={{ marginTop: '0.35rem' }}>
+                    Connect Google below to auto-accept ownership, or search Drive for{' '}
+                    <code>pendingowner:me</code> and accept manually, then complete the upload.
+                  </p>
+                )}
+                {oauthConnected && (
+                  <p className="bk-status-card-desc" style={{ marginTop: '0.35rem' }}>
+                    Owner connected as{' '}
+                    <strong>{oauth?.connectedEmail || form.googleDrive.oauthConnectedEmail}</strong>
+                    — ownership auto-accepts for automated backups.
+                  </p>
+                )}
               </div>
             </div>
             <div className="bk-status-card-actions">
@@ -210,11 +349,15 @@ function DatabaseBackup() {
                 type="button"
                 className="btn-primary btn-sm"
                 loading={running}
-                loadingText="Backing up…"
+                loadingText={awaitingOwnership && !oauthConnected ? 'Uploading…' : 'Backing up…'}
                 onClick={handleRunNow}
               >
-                <Play className="icon-sm" aria-hidden="true" />
-                Run now
+                {awaitingOwnership && !oauthConnected ? (
+                  <Upload className="icon-sm" aria-hidden="true" />
+                ) : (
+                  <Play className="icon-sm" aria-hidden="true" />
+                )}
+                {awaitingOwnership && !oauthConnected ? 'Complete upload' : 'Run now'}
               </LoadingButton>
             </div>
           </div>
@@ -262,21 +405,19 @@ function DatabaseBackup() {
         </div>
       </div>
 
-      {/* ── Settings form ──────────────────────────────────── */}
       <form className="config-form" onSubmit={handleSave}>
-        {/* Schedule section */}
         <div className="config-form-section">
           <h3 className="config-form-section-title">
             <Clock className="icon-sm" aria-hidden="true" />
             Schedule
           </h3>
 
-          {/* Enable toggle */}
           <div className="bk-enable-row">
             <div className="bk-enable-row-text">
               <p className="bk-enable-row-label">Enable automatic backups</p>
               <p className="bk-enable-row-hint">
-                Runs <code>mysqldump</code> on the selected schedule and uploads to Google Drive.
+                Runs a MySQL dump on the selected schedule and uploads to Google Drive. Connect the
+                owner Google account once so cron can auto-accept ownership.
               </p>
             </div>
             <button
@@ -293,7 +434,6 @@ function DatabaseBackup() {
             </button>
           </div>
 
-          {/* Frequency cards */}
           <div>
             <p className="bk-freq-label">Backup frequency</p>
             <div className="bk-freq-grid">
@@ -324,7 +464,6 @@ function DatabaseBackup() {
           </div>
         </div>
 
-        {/* Google Drive section */}
         <div className="config-form-section">
           <div className="bk-section-hd">
             <h3 className="config-form-section-title">
@@ -332,44 +471,45 @@ function DatabaseBackup() {
               Google Drive
             </h3>
             <a
-              href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+              href="https://console.cloud.google.com/apis/credentials"
               target="_blank"
               rel="noopener noreferrer"
               className="bk-ext-link"
             >
-              Open GCP Console ↗
+              Open GCP Credentials ↗
             </a>
           </div>
 
-          {/* Setup steps */}
           <div className="bk-setup-steps">
             <div className="bk-setup-step">
               <span className="bk-setup-num">1</span>
               <span>
-                Create a <strong>service account</strong> in GCP and enable the{' '}
-                <strong>Google Drive API</strong>.
+                Create a <strong>service account</strong>, enable <strong>Google Drive API</strong>,
+                and share your Drive folder with it as <strong>Editor</strong>.
               </span>
             </div>
             <div className="bk-setup-step">
               <span className="bk-setup-num">2</span>
               <span>
-                Download a JSON key and share your Drive folder with the service account email as{' '}
-                <strong>Editor</strong>.
+                Create an OAuth <strong>Web application</strong> client and add this redirect URI:{' '}
+                <code>{oauth?.redirectUri || 'http://localhost:3000/api/backup/google/callback'}</code>
               </span>
             </div>
             <div className="bk-setup-step">
               <span className="bk-setup-num">3</span>
               <span>
-                Copy the folder ID from the Drive URL:{' '}
-                <code>
-                  .../folders/<strong>FOLDER_ID</strong>
-                </code>
-                .
+                Paste folder ID, owner Gmail, service account JSON, and OAuth client ID/secret below.
+              </span>
+            </div>
+            <div className="bk-setup-step">
+              <span className="bk-setup-num">4</span>
+              <span>
+                Click <strong>Connect Google account</strong> once — OMNICRM will auto-accept
+                ownership for every backup (including cron).
               </span>
             </div>
           </div>
 
-          {/* Folder ID + service email */}
           <div className="bk-drive-fields">
             <label className="bk-field">
               <span className="bk-field-label">
@@ -383,6 +523,24 @@ function DatabaseBackup() {
                 placeholder="1AbCDefGhijKLmnopQRstuVWxyz"
                 autoComplete="off"
               />
+            </label>
+
+            <label className="bk-field">
+              <span className="bk-field-label">
+                <Mail className="icon-sm" aria-hidden="true" />
+                Backup Owner Gmail
+              </span>
+              <input
+                type="email"
+                value={form.googleDrive.ownerEmail || ''}
+                onChange={(e) => updateDrive({ ownerEmail: e.target.value })}
+                placeholder="kenwekesir@gmail.com"
+                autoComplete="off"
+                required
+              />
+              <span className="auth-field-hint">
+                Must match the Google account you connect for auto-accept.
+              </span>
             </label>
 
             <label className="bk-field">
@@ -401,14 +559,13 @@ function DatabaseBackup() {
             </label>
           </div>
 
-          {/* JSON key */}
           <label className="bk-field">
             <span className="bk-field-label">
               <KeyRound className="icon-sm" aria-hidden="true" />
               Service Account JSON Key
             </span>
             <textarea
-              rows={7}
+              rows={6}
               value={form.googleDrive.serviceAccountKey || ''}
               onChange={(e) => updateDrive({ serviceAccountKey: e.target.value })}
               placeholder={keyPlaceholder}
@@ -428,6 +585,75 @@ function DatabaseBackup() {
               )}
             </div>
           </label>
+
+          <div className="bk-drive-fields" style={{ marginTop: '1rem' }}>
+            <label className="bk-field">
+              <span className="bk-field-label">
+                <KeyRound className="icon-sm" aria-hidden="true" />
+                OAuth Client ID
+              </span>
+              <input
+                type="text"
+                value={form.googleDrive.oauthClientId || ''}
+                onChange={(e) => updateDrive({ oauthClientId: e.target.value })}
+                placeholder="xxxxx.apps.googleusercontent.com"
+                autoComplete="off"
+              />
+            </label>
+
+            <label className="bk-field">
+              <span className="bk-field-label">
+                <KeyRound className="icon-sm" aria-hidden="true" />
+                OAuth Client Secret
+              </span>
+              <input
+                type="password"
+                value={form.googleDrive.oauthClientSecret || ''}
+                onChange={(e) => updateDrive({ oauthClientSecret: e.target.value })}
+                placeholder={oauthSecretPlaceholder}
+                autoComplete="off"
+              />
+              {form.googleDrive.oauthClientSecretSet && (
+                <span className="auth-field-hint">Secret saved — leave blank to keep it.</span>
+              )}
+            </label>
+          </div>
+
+          <div className="bk-enable-row" style={{ marginTop: '1rem' }}>
+            <div className="bk-enable-row-text">
+              <p className="bk-enable-row-label">Owner Google account</p>
+              <p className="bk-enable-row-hint">
+                {oauthConnected
+                  ? `Connected as ${oauth?.connectedEmail || form.googleDrive.oauthConnectedEmail}. Backups auto-accept ownership and upload in one step.`
+                  : 'One-time consent so OMNICRM can auto-accept ownership for every backup file.'}
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {oauthConnected ? (
+                <LoadingButton
+                  type="button"
+                  className="btn-icon-outline"
+                  loading={disconnecting}
+                  loadingText="Disconnecting…"
+                  onClick={handleDisconnectGoogle}
+                >
+                  <Link2Off className="icon-sm" aria-hidden="true" />
+                  Disconnect
+                </LoadingButton>
+              ) : (
+                <LoadingButton
+                  type="button"
+                  className="btn-primary btn-sm"
+                  loading={connecting}
+                  loadingText="Redirecting…"
+                  onClick={handleConnectGoogle}
+                >
+                  <Link2 className="icon-sm" aria-hidden="true" />
+                  Connect Google account
+                </LoadingButton>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="config-form-actions">

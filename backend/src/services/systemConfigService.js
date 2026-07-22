@@ -10,6 +10,8 @@ const SECRET_FIELD_PATHS = [
   ['voice', 'yeastar', 'clientSecret'],
   ['voice', 'yeastar', 'integrationApiKey'],
   ['backup', 'googleDrive', 'serviceAccountKey'],
+  ['backup', 'googleDrive', 'oauthClientSecret'],
+  ['backup', 'googleDrive', 'oauthRefreshToken'],
 ];
 
 function getAtPath(obj, path) {

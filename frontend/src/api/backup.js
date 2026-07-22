@@ -16,3 +16,13 @@ export async function parseServiceAccountKey(serviceAccountKey) {
   });
   return data;
 }
+
+export async function fetchBackupGoogleAuthUrl() {
+  const { data } = await api.get('/api/backup/google/auth-url');
+  return data;
+}
+
+export async function disconnectBackupGoogle() {
+  const { data } = await api.post('/api/backup/google/disconnect');
+  return data;
+}

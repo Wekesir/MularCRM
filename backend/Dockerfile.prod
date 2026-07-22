@@ -1,6 +1,8 @@
 FROM node:20-alpine
 
-RUN apk add --no-cache mysql-client
+# mysql-client on Alpine is MariaDB's client; mariadb-connector-c provides
+# caching_sha2_password.so so dumps can authenticate against MySQL 8.
+RUN apk add --no-cache mysql-client mariadb-connector-c
 
 WORKDIR /app
 

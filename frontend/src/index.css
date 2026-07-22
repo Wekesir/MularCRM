@@ -3592,6 +3592,11 @@ h2.rpt-filter-modal-title,
   color: var(--theme-color);
 }
 
+.bk-badge--awaiting {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: #d97706;
+}
+
 .bk-badge--idle {
   background: var(--bg-elevated);
   color: var(--text-secondary);
