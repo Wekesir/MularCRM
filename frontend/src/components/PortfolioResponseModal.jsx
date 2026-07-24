@@ -53,21 +53,23 @@ function PortfolioResponseModal({
 
   if (!open || !debtor) return null;
 
-  const canSave = Boolean(contactStatusId) && (!isPtp || Boolean(reminderDate));
+  const notesOk = notes.trim().length >= 5;
+  const canSave = Boolean(contactStatusId) && notesOk && (!isPtp || Boolean(reminderDate));
 
   const handleSave = () => {
     if (!canSave) return;
+    const trimmedNotes = notes.trim();
     const payload = {
       channel,
       contactStatusId: Number(contactStatusId),
-      notes: notes.trim() || undefined,
+      notes: trimmedNotes,
     };
     if (isPtp) {
       payload.ptp = {
         promisedAmount: promisedAmount === '' ? 0 : Number(promisedAmount),
         promiseDate: promiseDate || undefined,
         reminderDate,
-        notes: notes.trim() || undefined,
+        notes: trimmedNotes,
       };
     } else if (nextActionDate) {
       payload.nextActionDate = nextActionDate;
@@ -135,15 +137,21 @@ function PortfolioResponseModal({
 
           {/* Notes */}
           <div className="af-field">
-            <span className="af-label">Notes</span>
+            <span className="af-label">
+              How did this interaction go? <span className="text-destructive">*</span>
+            </span>
             <textarea
               className="af-input"
               rows={3}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Optional notes from the conversation…"
+              placeholder="Describe the interaction (required, at least 5 characters)…"
               disabled={isSaving}
+              required
             />
+            {notes.trim().length > 0 && notes.trim().length < 5 && (
+              <p className="text-xs text-destructive mt-1">Notes must be at least 5 characters.</p>
+            )}
           </div>
 
           {/* PTP section */}

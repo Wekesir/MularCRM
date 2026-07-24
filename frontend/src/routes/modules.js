@@ -17,6 +17,7 @@ import ClientFilesPage from '../pages/ClientFilesPage';
 import FileCasesPage from '../pages/case-management/FileCasesPage.jsx';
 import UnassignedFilesPage from '../pages/case-management/UnassignedFilesPage.jsx';
 import MyPortfolioPage from '../pages/case-management/MyPortfolioPage.jsx';
+import FieldEscalationsPage from '../pages/case-management/FieldEscalationsPage.jsx';
 
 // Communication
 import BulkSmsPage from '../pages/communication/BulkSmsPage';
@@ -89,6 +90,11 @@ export const modules = [
     path: '/case-management/unassigned-files',
     label: 'Unassigned Files',
     component: UnassignedFilesPage,
+  },
+  {
+    path: '/case-management/field-escalations',
+    label: 'Field Escalations',
+    component: FieldEscalationsPage,
   },
   { path: '/case-management/clients/:clientId/files', label: 'Client Files', component: ClientFilesPage, hidden: true },
   { path: '/case-management/clients/:clientId/files/:fileId/cases', label: 'File Cases', component: FileCasesPage, hidden: true },

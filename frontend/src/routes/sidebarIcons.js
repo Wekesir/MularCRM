@@ -32,6 +32,7 @@ import {
   LineChart,
   Mail,
   MapPin,
+  MapPinned,
   MessageSquare,
   MessageSquareText,
   Percent,
@@ -79,6 +80,7 @@ export const sidebarIcons = {
   '/case-management': Briefcase,
   '/case-management/my-portfolio': Headset,
   '/case-management/unassigned-files': AlertCircle,
+  '/case-management/field-escalations': MapPinned,
 
   // Communication
   '/communication/bulk-sms': Send,

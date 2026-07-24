@@ -21,6 +21,7 @@ const PERMISSION_REGISTRY = [
     submodules: [
       { key: 'all_cases', label: 'All Cases' },
       { key: 'my_portfolio', label: 'My Portfolio' },
+      { key: 'field_escalations', label: 'Field Escalations' },
     ],
   },
   { key: 'unassigned_files', label: 'Unassigned Files' },
@@ -161,6 +162,7 @@ function buildSeniorSupervisorPermissions() {
   setCrud(p, 'management.agent_management', r);
   setCrud(p, 'management.call_centers', CRUD);
   setCrud(p, 'case_management.all_cases', r);
+  setCrud(p, 'case_management.field_escalations', r);
   setCrud(p, 'unassigned_files', ro);
   setCrud(p, 'payments.payments', ro);
   setCrud(p, 'payments.ptp', ro);
@@ -185,6 +187,7 @@ function buildSupervisorPermissions() {
   setCrud(p, 'management.closed_files', ro);
   setCrud(p, 'management.agent_management', r);
   setCrud(p, 'case_management.all_cases', r);
+  setCrud(p, 'case_management.field_escalations', r);
   setCrud(p, 'unassigned_files', r);
   setCrud(p, 'payments.payments', ro);
   setCrud(p, 'payments.ptp', r);

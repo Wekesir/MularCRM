@@ -5,6 +5,8 @@ import { PersistGate } from 'redux-persist/integration/react';
 import ThemedToastContainer from './components/ThemedToastContainer.jsx';
 import App from './App.jsx';
 import './lib/chartSetup.js';
+// Bootstrap first; OMNICRM design-system styles in index.css load after and take precedence.
+import 'bootstrap/dist/css/bootstrap.min.css';
 import './index.css';
 import 'react-toastify/dist/ReactToastify.css';
 import { bootstrapFromPersistedState } from './store/bootstrap';

@@ -29,6 +29,10 @@ export const sidebarNav = [
         label: 'Unassigned Files',
         assignersOnly: true,
       },
+      {
+        path: '/case-management/field-escalations',
+        label: 'Field Escalations',
+      },
     ],
   },
   {

@@ -12,10 +12,12 @@ import {
   UserCog,
   ArrowUpRight,
   CalendarClock,
+  MapPinned,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { fetchOrgDashboard } from '../../api/dashboard';
+import { fetchFieldEscalationTotals } from '../../api/fieldEscalations';
 import StatCard from '../../components/StatCard';
 import SectionHeader from '../../components/SectionHeader';
 import {
@@ -46,13 +48,28 @@ function SupervisorDashboard() {
   const { colorMode } = useTheme();
   const { callCenterName } = usePermissions();
   const [data, setData] = useState(null);
+  const [escalationTotals, setEscalationTotals] = useState({
+    eligible: 0,
+    pendingSenior: 0,
+    approved: 0,
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const payload = await fetchOrgDashboard();
+      const [payload, totals] = await Promise.all([
+        fetchOrgDashboard(),
+        fetchFieldEscalationTotals().catch(() => null),
+      ]);
       setData(payload);
+      if (totals) {
+        setEscalationTotals({
+          eligible: Number(totals.eligible) || 0,
+          pendingSenior: Number(totals.pendingSenior) || 0,
+          approved: Number(totals.approved) || 0,
+        });
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to load dashboard');
     } finally {
@@ -205,6 +222,27 @@ function SupervisorDashboard() {
           </div>
           <Link to="/management/agent-management" className="ss-alert-link">
             Manage <ArrowUpRight className="icon-sm" />
+          </Link>
+        </div>
+      )}
+
+      {(escalationTotals.eligible > 0 ||
+        escalationTotals.pendingSenior > 0 ||
+        escalationTotals.approved > 0) && (
+        <div className="ss-alert ss-alert--warn">
+          <MapPinned className="ss-alert-icon" />
+          <div className="ss-alert-body">
+            <p className="ss-alert-title">
+              Field escalations need attention
+            </p>
+            <p className="ss-alert-desc">
+              {formatCount(escalationTotals.eligible)} eligible ·{' '}
+              {formatCount(escalationTotals.pendingSenior)} awaiting senior ·{' '}
+              {formatCount(escalationTotals.approved)} ready to assign
+            </p>
+          </div>
+          <Link to="/case-management/field-escalations" className="ss-alert-link">
+            Review <ArrowUpRight className="icon-sm" />
           </Link>
         </div>
       )}

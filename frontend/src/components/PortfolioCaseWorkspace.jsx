@@ -3,6 +3,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   CalendarRange,
+  ChevronDown,
   ClipboardList,
   Loader2,
   Mail,
@@ -60,6 +61,35 @@ function ActivityIcon({ item }) {
   if (item.channel === 'email') return <Mail className="icon-sm" />;
   if (item.direction === 'inbound') return <ArrowDownLeft className="icon-sm" />;
   return <ArrowUpRight className="icon-sm" />;
+}
+
+function channelLabel(item) {
+  if (item.channel === 'call') {
+    if (item.direction === 'inbound') return 'Inbound call';
+    if (item.kind === 'call_log') return 'Call logged';
+    return 'Outbound call';
+  }
+  if (item.channel === 'sms') return 'SMS';
+  if (item.channel === 'email') return 'Email';
+  return 'Interaction';
+}
+
+/** Prefer notes → preview → subject for teaser / detail body. */
+function interactionTeaser(item) {
+  const notes = item.notes != null ? String(item.notes).trim() : '';
+  if (notes) return notes;
+  const preview = item.preview != null ? String(item.preview).trim() : '';
+  if (preview) return preview;
+  const subject = item.subject != null ? String(item.subject).trim() : '';
+  return subject || '';
+}
+
+function messageBodyText(item) {
+  const preview = item.preview != null ? String(item.preview).trim() : '';
+  const notes = item.notes != null ? String(item.notes).trim() : '';
+  // When preview is just notes duplicated, skip showing message separately.
+  if (preview && preview !== notes) return preview;
+  return '';
 }
 
 function buildSummary(items) {
@@ -123,6 +153,7 @@ function PortfolioCaseWorkspace({
   const [calling, setCalling] = useState(false);
   const [callHint, setCallHint] = useState('');
   const [activeDialer, setActiveDialer] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
 
   const loadActivity = useCallback(async () => {
     if (!debtor?.id) return;
@@ -143,6 +174,7 @@ function PortfolioCaseWorkspace({
     if (!open || !debtor?.id) return undefined;
     setChannelTab('all');
     setCallHint('');
+    setExpandedId(null);
     fetchActiveDialer()
       .then(setActiveDialer)
       .catch(() => setActiveDialer(null));
@@ -164,13 +196,22 @@ function PortfolioCaseWorkspace({
   }, [open, debtor?.id, loadActivity]);
 
   useEffect(() => {
+    setExpandedId(null);
+  }, [channelTab]);
+
+  useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
-      if (e.key === 'Escape' && !calling) onClose();
+      if (e.key !== 'Escape' || calling) return;
+      if (expandedId) {
+        setExpandedId(null);
+        return;
+      }
+      onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, calling, onClose]);
+  }, [open, calling, onClose, expandedId]);
 
   const activity = useMemo(() => {
     if (channelTab === 'all') return allActivity;
@@ -465,58 +506,164 @@ function PortfolioCaseWorkspace({
                   </p>
                 </div>
               ) : (
-                <div className="pcw-timeline">
-                  {activity.map((item) => (
-                    <article
-                      key={item.id}
-                      className={`pcw-activity-item pcw-activity-item--${item.channel}`}
-                    >
-                      <span
-                        className={`pcw-activity-icon pcw-activity-icon--${item.channel}`}
-                        aria-hidden="true"
+                <div className="pcw-timeline" role="list">
+                  {activity.map((item, index) => {
+                    const isExpanded = expandedId === item.id;
+                    const teaser = interactionTeaser(item);
+                    const messageBody = messageBodyText(item);
+                    const durationLabel = formatDuration(item.durationSeconds);
+                    const detailsId = `pcw-activity-details-${item.id}`;
+
+                    return (
+                      <article
+                        key={item.id}
+                        role="listitem"
+                        className={[
+                          'pcw-activity-item',
+                          `pcw-activity-item--${item.channel}`,
+                          isExpanded ? 'is-expanded' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        style={{ '--i': index }}
                       >
-                        <ActivityIcon item={item} />
-                      </span>
-                      <div className="pcw-activity-body">
-                        <div className="pcw-activity-top">
-                          <span className="pcw-activity-channel">
-                            {item.channel === 'call'
-                              ? item.direction === 'inbound'
-                                ? 'Inbound call'
-                                : item.kind === 'call_log'
-                                  ? 'Call logged'
-                                  : 'Outbound call'
-                              : item.channel === 'sms'
-                                ? 'SMS'
-                                : 'Email'}
+                        <button
+                          type="button"
+                          className="pcw-activity-item-toggle"
+                          aria-expanded={isExpanded}
+                          aria-controls={detailsId}
+                          onClick={() =>
+                            setExpandedId((current) => (current === item.id ? null : item.id))
+                          }
+                        >
+                          <span
+                            className={`pcw-activity-icon pcw-activity-icon--${item.channel}`}
+                            aria-hidden="true"
+                          >
+                            <ActivityIcon item={item} />
                           </span>
-                          <time className="pcw-activity-time" dateTime={item.createdAt}>
-                            {formatWhen(item.createdAt)}
-                          </time>
+                          <div className="pcw-activity-body">
+                            <div className="pcw-activity-top">
+                              <span className="pcw-activity-channel">{channelLabel(item)}</span>
+                              <span className="pcw-activity-top-right">
+                                <time className="pcw-activity-time" dateTime={item.createdAt}>
+                                  {formatWhen(item.createdAt)}
+                                </time>
+                                <ChevronDown
+                                  className={`pcw-activity-chevron icon-sm${isExpanded ? ' is-open' : ''}`}
+                                  aria-hidden="true"
+                                />
+                              </span>
+                            </div>
+                            {teaser && (
+                              <p className={isExpanded ? 'pcw-activity-preview' : 'pcw-activity-teaser'}>
+                                {teaser}
+                              </p>
+                            )}
+                            <div className="pcw-activity-meta">
+                              {item.status && <span className="pcw-chip">{item.status}</span>}
+                              {durationLabel && <span className="pcw-chip">{durationLabel}</span>}
+                              {item.recordingUrl && (
+                                <span className="pcw-chip">Has recording</span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+
+                        <div
+                          id={detailsId}
+                          className={`pcw-activity-details${isExpanded ? ' is-open' : ''}`}
+                          aria-hidden={!isExpanded}
+                        >
+                          <div className="pcw-activity-details-inner">
+                            {item.agentName && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Agent</span>
+                                <span className="pcw-activity-detail-value">{item.agentName}</span>
+                              </div>
+                            )}
+                            {(item.status || item.statusCode) && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Outcome</span>
+                                <span className="pcw-activity-detail-value">
+                                  {item.status || '—'}
+                                  {item.statusCode ? ` (${item.statusCode})` : ''}
+                                </span>
+                              </div>
+                            )}
+                            {item.notes && String(item.notes).trim() && (
+                              <div className="pcw-activity-detail-row pcw-activity-detail-row--block">
+                                <span className="pcw-activity-detail-label">
+                                  How the interaction went
+                                </span>
+                                <p className="pcw-activity-detail-value pcw-activity-detail-notes">
+                                  {String(item.notes).trim()}
+                                </p>
+                              </div>
+                            )}
+                            {item.subject && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Subject</span>
+                                <span className="pcw-activity-detail-value">{item.subject}</span>
+                              </div>
+                            )}
+                            {messageBody && (
+                              <div className="pcw-activity-detail-row pcw-activity-detail-row--block">
+                                <span className="pcw-activity-detail-label">
+                                  {item.channel === 'sms' ? 'Message' : item.channel === 'email' ? 'Body' : 'Details'}
+                                </span>
+                                <p className="pcw-activity-detail-value pcw-activity-detail-notes">
+                                  {messageBody}
+                                </p>
+                              </div>
+                            )}
+                            {durationLabel && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Duration</span>
+                                <span className="pcw-activity-detail-value">{durationLabel}</span>
+                              </div>
+                            )}
+                            {(item.meta?.agentNumber || item.meta?.debtorNumber) && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Numbers</span>
+                                <span className="pcw-activity-detail-value">
+                                  {[
+                                    item.meta?.agentNumber ? `Agent ${item.meta.agentNumber}` : null,
+                                    item.meta?.debtorNumber ? `Debtor ${item.meta.debtorNumber}` : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')}
+                                </span>
+                              </div>
+                            )}
+                            {item.recordingUrl && (
+                              <div className="pcw-activity-detail-row">
+                                <span className="pcw-activity-detail-label">Recording</span>
+                                <a
+                                  className="pcw-activity-detail-link"
+                                  href={item.recordingUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  tabIndex={isExpanded ? 0 : -1}
+                                >
+                                  Open recording
+                                </a>
+                              </div>
+                            )}
+                            <div className="pcw-activity-detail-row">
+                              <span className="pcw-activity-detail-label">When</span>
+                              <time
+                                className="pcw-activity-detail-value"
+                                dateTime={item.createdAt}
+                              >
+                                {formatWhen(item.createdAt)}
+                              </time>
+                            </div>
+                          </div>
                         </div>
-                        {item.subject && <p className="pcw-activity-subject">{item.subject}</p>}
-                        {item.preview && <p className="pcw-activity-preview">{item.preview}</p>}
-                        <div className="pcw-activity-meta">
-                          {item.status && (
-                            <span className="pcw-chip">{item.status}</span>
-                          )}
-                          {formatDuration(item.durationSeconds) && (
-                            <span className="pcw-chip">{formatDuration(item.durationSeconds)}</span>
-                          )}
-                          {item.recordingUrl && (
-                            <a
-                              className="pcw-chip pcw-chip--link"
-                              href={item.recordingUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              Recording
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -1679,6 +1679,7 @@ async function initDebtConfigTables() {
       ['Temporarily Out of Service', 'TOS', 'Temporarily Out of Service', 30, 30],
       ['Wrong Number', 'WN', 'Number registered under another person or wrong number provided', 150, 150],
       ['Non-Confirmed payments', 'NCP', 'Casefiles whose payments have not reflected in the system', 100, 10],
+      ['Refuse to Pay', 'RTP', 'Debtor explicitly refuses to pay', 14, 10],
     ];
     for (const [name, code, description, maxNaDays, dialingPriority] of defaults) {
       await pool.query(
@@ -1686,6 +1687,17 @@ async function initDebtConfigTables() {
         [name, code, description, maxNaDays, dialingPriority]
       );
     }
+  }
+
+  // Ensure RTP exists on databases seeded before this status was added.
+  const [rtpRows] = await pool.query(
+    `SELECT id FROM contact_statuses WHERE code = 'RTP' OR name = 'Refuse to Pay' LIMIT 1`
+  );
+  if (!rtpRows[0]) {
+    await pool.query(
+      `INSERT INTO contact_statuses (name, code, description, max_na_days, dialing_priority)
+       VALUES ('Refuse to Pay', 'RTP', 'Debtor explicitly refuses to pay', 14, 10)`
+    );
   }
 
   // ── Debtor columns to support the advanced filter ──
@@ -1840,6 +1852,49 @@ async function initDebtConfigTables() {
       INDEX idx_restructure_inst_due (due_date),
       INDEX idx_restructure_inst_status (status),
       CONSTRAINT fk_restructure_inst_parent FOREIGN KEY (restructure_id) REFERENCES loan_restructures(id) ON DELETE CASCADE
+    )
+  `);
+
+  // ── field_escalations ── wait-period escalation to Field Agents
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS field_escalations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      debtor_id INT NOT NULL,
+      file_id INT NULL,
+      call_center_id INT NULL,
+      from_agent_user_id INT NULL,
+      to_field_agent_user_id INT NULL,
+      status ENUM(
+        'requested',
+        'pending_senior',
+        'approved',
+        'rejected',
+        'assigned',
+        'cancelled'
+      ) NOT NULL DEFAULT 'pending_senior',
+      refusal_count INT NOT NULL DEFAULT 0,
+      wait_started_at TIMESTAMP NULL,
+      eligible_at TIMESTAMP NULL,
+      requested_by INT NULL,
+      requested_at TIMESTAMP NULL,
+      supervisor_note TEXT NULL,
+      senior_reviewed_by INT NULL,
+      senior_reviewed_at TIMESTAMP NULL,
+      senior_note TEXT NULL,
+      rejection_reason TEXT NULL,
+      assigned_by INT NULL,
+      assigned_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_field_esc_status_center (status, call_center_id),
+      INDEX idx_field_esc_debtor (debtor_id),
+      INDEX idx_field_esc_eligible (eligible_at),
+      CONSTRAINT fk_field_esc_debtor FOREIGN KEY (debtor_id) REFERENCES debtors(id) ON DELETE CASCADE,
+      CONSTRAINT fk_field_esc_from_agent FOREIGN KEY (from_agent_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_field_esc_to_agent FOREIGN KEY (to_field_agent_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_field_esc_requested_by FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_field_esc_senior FOREIGN KEY (senior_reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+      CONSTRAINT fk_field_esc_assigned_by FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
     )
   `);
 

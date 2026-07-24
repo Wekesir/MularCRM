@@ -401,6 +401,21 @@ function buildTemplateValues(debtor, agent) {
   };
 }
 
+const MIN_INTERACTION_NOTES_LENGTH = 5;
+
+function requireInteractionNotes(rawNotes) {
+  const notes = rawNotes != null ? String(rawNotes).trim() : '';
+  if (notes.length < MIN_INTERACTION_NOTES_LENGTH) {
+    const err = new Error(
+      `Interaction notes are required (at least ${MIN_INTERACTION_NOTES_LENGTH} characters describing how the interaction went)`
+    );
+    err.code = 'BAD_REQUEST';
+    err.status = 400;
+    throw err;
+  }
+  return notes;
+}
+
 async function insertContactAttempt({
   debtorId,
   agentId,
@@ -466,6 +481,8 @@ async function sendPortfolioSms(user, debtorId, payload = {}) {
     throw err;
   }
 
+  const notes = requireInteractionNotes(payload.notes);
+
   const result = await sendSms({
     to: debtor.phone,
     message,
@@ -484,7 +501,7 @@ async function sendPortfolioSms(user, debtorId, payload = {}) {
     debtorId: debtor.id,
     agentId: user.id,
     channel: 'sms',
-    notes: payload.notes || null,
+    notes,
     messageBody: message,
   });
   await touchDebtorContact(debtor.id, { channel: 'sms' });
@@ -501,7 +518,7 @@ async function sendPortfolioSms(user, debtorId, payload = {}) {
       attemptId,
       channel: 'sms',
       sent: Boolean(result.sent),
-      notes: payload.notes || null,
+      notes,
       templateId: templateId || null,
       ...coverageAuditMeta(user, debtor),
     },
@@ -543,6 +560,8 @@ async function sendPortfolioEmail(user, debtorId, payload = {}) {
     throw err;
   }
 
+  const notes = requireInteractionNotes(payload.notes);
+
   await sendEmail({
     to: debtor.email,
     subject,
@@ -557,7 +576,7 @@ async function sendPortfolioEmail(user, debtorId, payload = {}) {
     debtorId: debtor.id,
     agentId: user.id,
     channel: 'email',
-    notes: payload.notes || null,
+    notes,
     messageBody: `${subject}\n\n${body}`,
   });
   await touchDebtorContact(debtor.id, { channel: 'email' });
@@ -573,7 +592,7 @@ async function sendPortfolioEmail(user, debtorId, payload = {}) {
     metadata: {
       attemptId,
       channel: 'email',
-      notes: payload.notes || null,
+      notes,
       templateId: templateId || null,
       subject,
       ...coverageAuditMeta(user, debtor),
@@ -613,7 +632,7 @@ async function logPortfolioResponse(user, debtorId, payload = {}) {
     throw err;
   }
 
-  const notes = payload.notes != null ? String(payload.notes).trim() || null : null;
+  const notes = requireInteractionNotes(payload.notes);
   const isPtp = String(status.code || '').toUpperCase() === 'PTP' || Boolean(payload.ptp);
   const previousContactStatusId = debtor.contact_status_id || null;
   const previousContactStatusCode = debtor.contact_status_code || null;

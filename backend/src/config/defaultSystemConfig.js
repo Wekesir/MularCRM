@@ -97,6 +97,14 @@ const DEFAULT_SYSTEM_CONFIG = {
       clients: [],
     },
   },
+  fieldEscalation: {
+    enabled: true,
+    refusalStatusCodes: ['RTP', 'N-C', 'HU'],
+    minRefusalContacts: 3,
+    lookbackDays: 30,
+    waitPeriodDays: 14,
+    requirePaymentGap: true,
+  },
 };
 
 module.exports = { DEFAULT_SYSTEM_CONFIG };

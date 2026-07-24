@@ -19,6 +19,7 @@ import {
   CalendarClock,
   CalendarX2,
   ArrowRightLeft,
+  X,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'react-toastify';
@@ -45,12 +46,14 @@ import {
 } from '../../api/agents';
 import { fetchAgentExperienceLevels } from '../../api/agentExperienceLevels';
 import { fetchAgentExpertiseAreas } from '../../api/agentExpertiseAreas';
+import { fetchCallCenters } from '../../api/callCenters';
 
 const PAGE_SIZE = 10;
 
 const SEARCH_FIELDS = [
   { value: 'name', label: 'Name' },
   { value: 'email', label: 'Email' },
+  { value: 'callCenterName', label: 'Call Center' },
   { value: 'experience', label: 'Experience' },
   { value: 'expertise', label: 'Expertise' },
   { value: 'workload', label: 'Workload' },
@@ -63,6 +66,7 @@ const EMPTY_FILTERS = {
   expertise: '',
   workload: '',
   status: '',
+  callCenterId: '',
 };
 
 function formatMoney(value) {
@@ -95,6 +99,7 @@ function AgentManagementPage() {
   const [coverages, setCoverages] = useState([]);
   const [experienceLevels, setExperienceLevels] = useState([]);
   const [expertiseAreas, setExpertiseAreas] = useState([]);
+  const [callCenters, setCallCenters] = useState([]);
 
   const [search, setSearch] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -120,14 +125,20 @@ function AgentManagementPage() {
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [agentData, levels, areas, coverageData] = await Promise.all([
+      const callCenterId =
+        appliedFilters.callCenterId && appliedFilters.callCenterId !== 'unbound'
+          ? appliedFilters.callCenterId
+          : undefined;
+      const [agentData, levels, areas, centers, coverageData] = await Promise.all([
         fetchAgents({
           experience: appliedFilters.experience || undefined,
           expertise: appliedFilters.expertise || undefined,
           workload: appliedFilters.workload || undefined,
+          callCenterId,
         }),
         fetchAgentExperienceLevels(),
         fetchAgentExpertiseAreas(),
+        fetchCallCenters({ includeInactive: false }).catch(() => []),
         canAssignCases
           ? fetchAgentCoverages().catch(() => [])
           : Promise.resolve([]),
@@ -135,13 +146,20 @@ function AgentManagementPage() {
       setAgents(agentData);
       setExperienceLevels(levels);
       setExpertiseAreas(areas);
+      setCallCenters(Array.isArray(centers) ? centers : []);
       setCoverages(Array.isArray(coverageData) ? coverageData : []);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to load agents');
     } finally {
       setIsLoading(false);
     }
-  }, [appliedFilters.experience, appliedFilters.expertise, appliedFilters.workload, canAssignCases]);
+  }, [
+    appliedFilters.experience,
+    appliedFilters.expertise,
+    appliedFilters.workload,
+    appliedFilters.callCenterId,
+    canAssignCases,
+  ]);
 
   const coverageByAbsentId = useMemo(() => {
     const map = new Map();
@@ -155,18 +173,35 @@ function AgentManagementPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const applyFilters = () => {
+  const openFilters = useCallback(() => {
+    setFilters({ ...appliedFilters });
+    setShowFilters(true);
+  }, [appliedFilters]);
+
+  const closeFilters = useCallback(() => setShowFilters(false), []);
+
+  const applyFilters = useCallback(() => {
     setAppliedFilters(filters);
     setShowFilters(false);
     setPage(1);
-  };
+  }, [filters]);
 
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     const empty = { ...EMPTY_FILTERS };
     setFilters(empty);
     setAppliedFilters(empty);
+    setShowFilters(false);
     setPage(1);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!showFilters) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') closeFilters();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [showFilters, closeFilters]);
 
   const activeFilterCount = useMemo(() => {
     const f = appliedFilters;
@@ -176,17 +211,18 @@ function AgentManagementPage() {
     if (f.expertise) n += 1;
     if (f.workload) n += 1;
     if (f.status) n += 1;
+    if (f.callCenterId) n += 1;
     return n;
   }, [appliedFilters]);
 
-  // Client-side: quick table search + advanced (searchField/value, status)
+  // Client-side: quick table search + advanced (searchField/value, status, call center)
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const f = appliedFilters;
     const fieldQ = f.searchValue.trim().toLowerCase();
     return agents.filter((a) => {
       if (q) {
-        const hay = `${a.name || ''} ${a.email || ''} ${a.experience || ''} ${a.expertise || ''} ${a.workload || ''}`.toLowerCase();
+        const hay = `${a.name || ''} ${a.email || ''} ${a.callCenterName || ''} ${a.experience || ''} ${a.expertise || ''} ${a.workload || ''}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (fieldQ) {
@@ -195,6 +231,11 @@ function AgentManagementPage() {
       }
       if (f.status === 'active' && !a.isActive) return false;
       if (f.status === 'inactive' && a.isActive) return false;
+      if (f.callCenterId === 'unbound') {
+        if (a.callCenterId) return false;
+      } else if (f.callCenterId) {
+        if (Number(a.callCenterId) !== Number(f.callCenterId)) return false;
+      }
       return true;
     });
   }, [agents, search, appliedFilters]);
@@ -426,6 +467,7 @@ function AgentManagementPage() {
       '#': i + 1,
       'Agent Name': a.name || '',
       Email: a.email || '',
+      'Call Center': a.callCenterName || 'Unbound',
       Experience: a.experience || '',
       Expertise: a.expertise || '',
       Workload: a.workload || '',
@@ -454,10 +496,11 @@ function AgentManagementPage() {
         </button>
         <button
           type="button"
-          className={`btn-icon-outline${showFilters ? ' btn-icon-outline--active' : ''}`}
-          aria-label="Toggle filters"
+          className={`btn-icon-outline${showFilters || activeFilterCount > 0 ? ' btn-icon-outline--active' : ''}`}
+          aria-label="Open filters"
+          aria-haspopup="dialog"
           aria-expanded={showFilters}
-          onClick={() => setShowFilters((v) => !v)}
+          onClick={openFilters}
           style={{ position: 'relative', width: 'auto', paddingInline: '0.75rem', gap: '0.375rem' }}
         >
           <Filter className="icon-sm" />
@@ -481,98 +524,175 @@ function AgentManagementPage() {
       </>,
     );
     return () => setActions(null);
-  }, [setActions, load, isSystemAdmin, navigate, showFilters, activeFilterCount, setShowFilters]);
+  }, [setActions, load, isSystemAdmin, navigate, showFilters, activeFilterCount, openFilters]);
 
   const showActions = isSystemAdmin || canAssignCases;
   const colCount = showActions ? 12 : 11; // # + agent + call center + 8 metrics (+ actions)
 
   return (
     <div className="cm-page">
-      {/* Filter panel */}
       {showFilters && (
-        <div className="cfm-filter-panel">
-          <div className="cfm-filter-grid">
-            <div className="af-field ama-search-field">
-              <span className="af-label">Search By</span>
-              <select
-                className="af-select"
-                value={filters.searchField}
-                onChange={(e) => setFilters((p) => ({ ...p, searchField: e.target.value }))}
+        <div
+          className="modal-backdrop modal-backdrop-static"
+          role="presentation"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeFilters();
+          }}
+        >
+          <div
+            className="modal-panel rpt-filter-modal rpt-filter-modal--wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ama-filters-modal-title"
+          >
+            <div className="rpt-filter-modal-header">
+              <div className="rpt-filter-modal-title-wrap">
+                <span className="rpt-filter-modal-icon" aria-hidden="true">
+                  <Filter className="icon-sm" />
+                </span>
+                <h2 id="ama-filters-modal-title" className="rpt-filter-modal-title">Filters</h2>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={closeFilters}
+                aria-label="Close filters"
               >
-                {SEARCH_FIELDS.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
+                <X className="icon-sm" />
+              </button>
             </div>
-            <div className="af-field ama-search-value">
-              <span className="af-label">Value</span>
-              <input
-                type="text"
-                className="af-input"
-                placeholder="Enter value"
-                value={filters.searchValue}
-                onChange={(e) => setFilters((p) => ({ ...p, searchValue: e.target.value }))}
-              />
+
+            <div className="rpt-filter-modal-body">
+              <div className="cfm-filter-grid">
+                <div className="af-field ama-search-field">
+                  <span className="af-label">Search By</span>
+                  <select
+                    className="af-select"
+                    value={filters.searchField}
+                    onChange={(e) => {
+                      const nextField = e.target.value;
+                      setFilters((p) => ({
+                        ...p,
+                        searchField: nextField,
+                        // Switching away from Call Center clears free-text; keep callCenterId
+                        // so an already-chosen center still applies until cleared.
+                        searchValue: nextField === 'callCenterName' ? '' : p.searchValue,
+                      }));
+                    }}
+                  >
+                    {SEARCH_FIELDS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="af-field ama-search-value">
+                  <span className="af-label">
+                    {filters.searchField === 'callCenterName' ? 'Call Center' : 'Value'}
+                  </span>
+                  {filters.searchField === 'callCenterName' ? (
+                    <select
+                      className="af-select"
+                      value={filters.callCenterId}
+                      onChange={(e) => setFilters((p) => ({
+                        ...p,
+                        callCenterId: e.target.value,
+                        searchValue: '',
+                      }))}
+                    >
+                      <option value="">Select call center…</option>
+                      <option value="unbound">Unbound</option>
+                      {callCenters.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      className="af-input"
+                      placeholder="Enter value"
+                      value={filters.searchValue}
+                      onChange={(e) => setFilters((p) => ({ ...p, searchValue: e.target.value }))}
+                    />
+                  )}
+                </div>
+                <div className="af-field">
+                  <span className="af-label">Experience</span>
+                  <select
+                    className="af-select"
+                    value={filters.experience}
+                    onChange={(e) => setFilters((p) => ({ ...p, experience: e.target.value }))}
+                  >
+                    <option value="">Any</option>
+                    {experienceLevels.map((l) => (
+                      <option key={l.id} value={l.name}>{l.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="af-field">
+                  <span className="af-label">Expertise</span>
+                  <select
+                    className="af-select"
+                    value={filters.expertise}
+                    onChange={(e) => setFilters((p) => ({ ...p, expertise: e.target.value }))}
+                  >
+                    <option value="">Any</option>
+                    {expertiseAreas.map((a) => (
+                      <option key={a.id} value={a.name}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="af-field">
+                  <span className="af-label">Workload</span>
+                  <select
+                    className="af-select"
+                    value={filters.workload}
+                    onChange={(e) => setFilters((p) => ({ ...p, workload: e.target.value }))}
+                  >
+                    <option value="">Any</option>
+                    <option value="Light">Light</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Heavy">Heavy</option>
+                  </select>
+                </div>
+                {filters.searchField !== 'callCenterName' && (
+                  <div className="af-field">
+                    <span className="af-label">Call Center</span>
+                    <select
+                      className="af-select"
+                      value={filters.callCenterId}
+                      onChange={(e) => setFilters((p) => ({ ...p, callCenterId: e.target.value }))}
+                    >
+                      <option value="">Any</option>
+                      <option value="unbound">Unbound</option>
+                      {callCenters.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="af-field">
+                  <span className="af-label">Status</span>
+                  <select
+                    className="af-select"
+                    value={filters.status}
+                    onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
+                  >
+                    <option value="">Any</option>
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="rpt-filter-modal-actions">
+                <button type="button" className="btn-icon-outline af-clear-btn" onClick={clearFilters}>
+                  Clear All
+                </button>
+                <button type="button" className="btn-primary btn-sm" onClick={applyFilters}>
+                  Apply Filters
+                </button>
+              </div>
             </div>
-            <div className="af-field">
-              <span className="af-label">Experience</span>
-              <select
-                className="af-select"
-                value={filters.experience}
-                onChange={(e) => setFilters((p) => ({ ...p, experience: e.target.value }))}
-              >
-                <option value="">Any</option>
-                {experienceLevels.map((l) => (
-                  <option key={l.id} value={l.name}>{l.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="af-field">
-              <span className="af-label">Expertise</span>
-              <select
-                className="af-select"
-                value={filters.expertise}
-                onChange={(e) => setFilters((p) => ({ ...p, expertise: e.target.value }))}
-              >
-                <option value="">Any</option>
-                {expertiseAreas.map((a) => (
-                  <option key={a.id} value={a.name}>{a.name}</option>
-                ))}
-              </select>
-            </div>
-            <div className="af-field">
-              <span className="af-label">Workload</span>
-              <select
-                className="af-select"
-                value={filters.workload}
-                onChange={(e) => setFilters((p) => ({ ...p, workload: e.target.value }))}
-              >
-                <option value="">Any</option>
-                <option value="Light">Light</option>
-                <option value="Medium">Medium</option>
-                <option value="Heavy">Heavy</option>
-              </select>
-            </div>
-            <div className="af-field">
-              <span className="af-label">Status</span>
-              <select
-                className="af-select"
-                value={filters.status}
-                onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
-              >
-                <option value="">Any</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-          </div>
-          <div className="af-actions">
-            <button type="button" className="btn-icon-outline af-clear-btn" onClick={clearFilters}>
-              Clear All
-            </button>
-            <button type="button" className="btn-primary btn-sm" onClick={applyFilters}>
-              Apply Filters
-            </button>
           </div>
         </div>
       )}
@@ -587,7 +707,7 @@ function AgentManagementPage() {
             <input
               type="search"
               className="cm-search-input"
-              placeholder="Search agents by name, email or attributes…"
+              placeholder="Search agents by name, email, call center or attributes…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />

@@ -54,6 +54,11 @@ export const moduleMeta = {
     description:
       'Batch files with debtors still waiting to be assigned to an agent.',
   },
+  field_escalations: {
+    title: 'Field Escalations',
+    description:
+      'Escalate repeatedly refusing debtors to Field Agents after the wait period.',
+  },
 
   bulk_sms: {
     title: 'Bulk SMS',
@@ -246,6 +251,7 @@ export const pathToModuleKey = {
   '/case-management': 'all_cases',
   '/case-management/my-portfolio': 'my_portfolio',
   '/case-management/unassigned-files': 'unassigned_files',
+  '/case-management/field-escalations': 'field_escalations',
 
   '/communication/bulk-sms': 'bulk_sms',
   '/communication/bulk-emails': 'bulk_emails',
@@ -328,6 +334,10 @@ export const pathToPermission = {
   '/case-management': { module: 'case_management', sub: 'all_cases' },
   '/case-management/my-portfolio': { module: 'case_management', sub: 'my_portfolio' },
   '/case-management/unassigned-files': { module: 'unassigned_files' },
+  '/case-management/field-escalations': {
+    module: 'case_management',
+    sub: 'field_escalations',
+  },
 
   '/communication/bulk-sms': { module: 'communication', sub: 'bulk_sms' },
   '/communication/bulk-emails': { module: 'communication', sub: 'bulk_emails' },

@@ -8,6 +8,7 @@ function PortfolioSendModal({ open, onClose, mode = 'sms', debtor, isSaving, onS
   const [templateId, setTemplateId] = useState('');
   const [message, setMessage] = useState('');
   const [subject, setSubject] = useState('');
+  const [notes, setNotes] = useState('');
   const [loadingTemplates, setLoadingTemplates] = useState(false);
 
   const isSms = mode === 'sms';
@@ -20,6 +21,7 @@ function PortfolioSendModal({ open, onClose, mode = 'sms', debtor, isSaving, onS
     setTemplateId('');
     setMessage('');
     setSubject('');
+    setNotes('');
     let cancelled = false;
     setLoadingTemplates(true);
     const load = isSms
@@ -66,20 +68,27 @@ function PortfolioSendModal({ open, onClose, mode = 'sms', debtor, isSaving, onS
 
   if (!open || !debtor) return null;
 
-  const canSend = Boolean(recipient) && (isSms ? Boolean(message.trim()) : Boolean(subject.trim() && message.trim()));
+  const notesOk = notes.trim().length >= 5;
+  const canSend =
+    Boolean(recipient) &&
+    notesOk &&
+    (isSms ? Boolean(message.trim()) : Boolean(subject.trim() && message.trim()));
 
   const handleSend = () => {
     if (!canSend) return;
+    const trimmedNotes = notes.trim();
     if (isSms) {
       onSend({
         templateId: templateId || undefined,
         message: message.trim(),
+        notes: trimmedNotes,
       });
     } else {
       onSend({
         templateId: templateId || undefined,
         subject: subject.trim(),
         body: message.trim(),
+        notes: trimmedNotes,
       });
     }
   };
@@ -153,6 +162,24 @@ function PortfolioSendModal({ open, onClose, mode = 'sms', debtor, isSaving, onS
               placeholder={isSms ? 'Type your SMS…' : 'Type your email…'}
               disabled={isSaving}
             />
+          </div>
+
+          <div className="af-field">
+            <span className="af-label">
+              How did this interaction go? <span className="text-destructive">*</span>
+            </span>
+            <textarea
+              className="af-input"
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Describe the interaction (required, at least 5 characters)…"
+              disabled={isSaving}
+              required
+            />
+            {notes.trim().length > 0 && notes.trim().length < 5 && (
+              <p className="text-xs text-destructive mt-1">Notes must be at least 5 characters.</p>
+            )}
           </div>
         </div>
 
