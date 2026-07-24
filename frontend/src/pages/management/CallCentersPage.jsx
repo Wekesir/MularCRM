@@ -233,6 +233,12 @@ function StaffPersonRow({ person }) {
           {!person.isActive ? (
             <span className="cc-staff-inactive-tag">Inactive</span>
           ) : null}
+          {person.onLeave ? (
+            <span className="cc-staff-leave-tag">
+              On leave
+              {person.coveredByName ? ` · covered by ${person.coveredByName}` : ''}
+            </span>
+          ) : null}
         </p>
         <p className="cc-staff-role">{person.roleName}</p>
         <div className="cc-staff-meta">

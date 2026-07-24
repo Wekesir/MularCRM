@@ -11,6 +11,7 @@ import {
   TrendingUp,
   UserCog,
   ArrowUpRight,
+  CalendarClock,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -185,6 +186,25 @@ function SupervisorDashboard() {
           </div>
           <Link to="/case-management/unassigned-files" className="ss-alert-link">
             Assign now <ArrowUpRight className="icon-sm" />
+          </Link>
+        </div>
+      )}
+
+      {/* Leave / coverage active */}
+      {Number(summary.activeCoverages || 0) > 0 && (
+        <div className="ss-alert ss-alert--info">
+          <CalendarClock className="ss-alert-icon" />
+          <div className="ss-alert-body">
+            <p className="ss-alert-title">
+              {formatCount(summary.activeCoverages)} leave coverage
+              {Number(summary.activeCoverages) !== 1 ? 's' : ''} active
+            </p>
+            <p className="ss-alert-desc">
+              Covering agents can work those portfolios; ownership stays with the absent agent.
+            </p>
+          </div>
+          <Link to="/management/agent-management" className="ss-alert-link">
+            Manage <ArrowUpRight className="icon-sm" />
           </Link>
         </div>
       )}

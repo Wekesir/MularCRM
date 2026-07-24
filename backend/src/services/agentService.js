@@ -100,15 +100,23 @@ async function listAgents({
             (SELECT MAX(la.login_at) FROM login_audit la
               WHERE la.user_id = u.id AND la.status = 'success') AS last_login,
             (SELECT COUNT(DISTINCT d.file_id) FROM debtors d
-              WHERE d.assigned_agent = u.name AND d.deleted_at IS NULL) AS files_assigned,
+              WHERE (d.assigned_agent_user_id = u.id
+                     OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = u.name))
+                AND d.deleted_at IS NULL AND d.is_closed = 0) AS files_assigned,
             (SELECT COALESCE(SUM(d.total_paid), 0) FROM debtors d
-              WHERE d.assigned_agent = u.name AND d.deleted_at IS NULL) AS collections,
+              WHERE (d.assigned_agent_user_id = u.id
+                     OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = u.name))
+                AND d.deleted_at IS NULL AND d.is_closed = 0) AS collections,
             (SELECT COUNT(*) FROM debtors d
               LEFT JOIN contact_statuses cs ON cs.id = d.contact_status_id
-              WHERE d.assigned_agent = u.name AND d.deleted_at IS NULL AND cs.code = 'PTP') AS ptp_count,
+              WHERE (d.assigned_agent_user_id = u.id
+                     OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = u.name))
+                AND d.deleted_at IS NULL AND d.is_closed = 0 AND cs.code = 'PTP') AS ptp_count,
             (SELECT COALESCE(SUM(d.installment_amount), 0) FROM debtors d
               LEFT JOIN contact_statuses cs ON cs.id = d.contact_status_id
-              WHERE d.assigned_agent = u.name AND d.deleted_at IS NULL AND cs.code = 'PTP') AS ptp_amount,
+              WHERE (d.assigned_agent_user_id = u.id
+                     OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = u.name))
+                AND d.deleted_at IS NULL AND d.is_closed = 0 AND cs.code = 'PTP') AS ptp_amount,
             (SELECT COUNT(*) FROM activity_log al
               WHERE al.user_id = u.id AND al.action_type LIKE 'call%') AS calls_made,
             (SELECT COUNT(*) FROM sms_audit sa
@@ -171,12 +179,19 @@ async function upsertAgentProfile(userId, data) {
   return getAgentById(userId);
 }
 
-async function setAgentActiveStatus(userId, isActive) {
+async function setAgentActiveStatus(userId, isActive, { performedBy, force = false } = {}) {
   const agent = await getAgentById(userId);
   if (!agent) {
     const err = new Error('Agent not found');
     err.code = 'NOT_FOUND';
     throw err;
+  }
+  if (!isActive) {
+    const { assertNoOpenPortfolio } = require('./agentHandoffService');
+    await assertNoOpenPortfolio(userId, {
+      allowSystemAdminOverride: force,
+      user: performedBy,
+    });
   }
   await pool.query('UPDATE users SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, userId]);
   return getAgentById(userId);

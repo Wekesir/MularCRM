@@ -464,17 +464,21 @@ async function getFileAllocation(fileId, { user = null } = {}) {
   if (user) await assertCallerCanAccessFile(user, file);
 
   const [rows] = await pool.query(
-    `SELECT d.assigned_agent AS agent_name,
-            ua.id AS agent_id,
+    `SELECT COALESCE(ua.name, d.assigned_agent) AS agent_name,
+            COALESCE(d.assigned_agent_user_id, ua.id) AS agent_id,
             COUNT(*) AS case_count,
             COALESCE(SUM(d.loan_amount), 0) AS loan_total,
             COALESCE(SUM(d.outstanding_balance), 0) AS outstanding_total
      FROM debtors d
-     LEFT JOIN users ua ON ua.name = d.assigned_agent
+     LEFT JOIN users ua ON ua.id = d.assigned_agent_user_id
+       OR (d.assigned_agent_user_id IS NULL AND ua.name = d.assigned_agent AND ua.deleted_at IS NULL)
      WHERE d.file_id = ? AND d.deleted_at IS NULL
-       AND d.assigned_agent IS NOT NULL AND d.assigned_agent <> ''
-     GROUP BY d.assigned_agent, ua.id
-     ORDER BY case_count DESC, d.assigned_agent ASC`,
+       AND (
+         d.assigned_agent_user_id IS NOT NULL
+         OR (d.assigned_agent IS NOT NULL AND d.assigned_agent <> '')
+       )
+     GROUP BY COALESCE(d.assigned_agent_user_id, ua.id), COALESCE(ua.name, d.assigned_agent)
+     ORDER BY case_count DESC, agent_name ASC`,
     [id]
   );
 
@@ -490,6 +494,7 @@ async function getFileAllocation(fileId, { user = null } = {}) {
     `SELECT COUNT(*) AS cnt, COALESCE(SUM(loan_amount), 0) AS loan_total
      FROM debtors
      WHERE file_id = ? AND deleted_at IS NULL
+       AND assigned_agent_user_id IS NULL
        AND (assigned_agent IS NULL OR assigned_agent = '')`,
     [id]
   );
@@ -552,6 +557,11 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
   for (const agentId of ids) {
     const agent = await getAgentById(agentId);
     if (!agent) continue;
+    if (!agent.isActive) {
+      const err = new Error(`${agent.name} is inactive and cannot receive case assignments`);
+      err.code = 'VALIDATION';
+      throw err;
+    }
     agents.push(agent);
   }
   if (agents.length === 0) {
@@ -569,6 +579,7 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
     const [unassigned] = await conn.query(
       `SELECT id, name FROM debtors
        WHERE file_id = ? AND deleted_at IS NULL
+         AND assigned_agent_user_id IS NULL
          AND (assigned_agent IS NULL OR assigned_agent = '')
        ORDER BY id ASC
        FOR UPDATE`,
@@ -579,10 +590,10 @@ async function assignFileAgents(fileId, agentIds, { performedBy } = {}) {
     const debtorEvents = [];
     for (let i = 0; i < unassigned.length; i += 1) {
       const agent = agents[i % agents.length];
-      await conn.query('UPDATE debtors SET assigned_agent = ? WHERE id = ?', [
-        agent.name,
-        unassigned[i].id,
-      ]);
+      await conn.query(
+        'UPDATE debtors SET assigned_agent = ?, assigned_agent_user_id = ? WHERE id = ?',
+        [agent.name, agent.id, unassigned[i].id]
+      );
       perAgentCounts.set(agent.id, perAgentCounts.get(agent.id) + 1);
       const metadata = { agentName: agent.name };
       debtorEvents.push({
@@ -673,13 +684,15 @@ async function unassignFileAgents(fileId, agentIds, { performedBy } = {}) {
   for (const agent of agents) {
     const [assignedRows] = await pool.query(
       `SELECT id, name FROM debtors
-       WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
-      [id, agent.name]
+       WHERE file_id = ? AND deleted_at IS NULL
+         AND (assigned_agent_user_id = ? OR (assigned_agent_user_id IS NULL AND assigned_agent = ?))`,
+      [id, agent.id, agent.name]
     );
     const [result] = await pool.query(
-      `UPDATE debtors SET assigned_agent = NULL
-       WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
-      [id, agent.name]
+      `UPDATE debtors SET assigned_agent = NULL, assigned_agent_user_id = NULL
+       WHERE file_id = ? AND deleted_at IS NULL
+         AND (assigned_agent_user_id = ? OR (assigned_agent_user_id IS NULL AND assigned_agent = ?))`,
+      [id, agent.id, agent.name]
     );
     const caseCount = result.affectedRows || 0;
     if (caseCount > 0) {
@@ -752,6 +765,11 @@ async function reallocateFileAgents(fileId, { fromAgentId, toAgentId } = {}, { p
     err.code = 'NOT_FOUND';
     throw err;
   }
+  if (!toAgent.isActive) {
+    const err = new Error(`${toAgent.name} is inactive and cannot receive case assignments`);
+    err.code = 'VALIDATION';
+    throw err;
+  }
 
   const fileCenterId = await getFileCallCenterId(file);
   await assertAgentsInCallerCenter(performedBy, [fromAgent, toAgent], fileCenterId);
@@ -763,16 +781,18 @@ async function reallocateFileAgents(fileId, { fromAgentId, toAgentId } = {}, { p
     await conn.beginTransaction();
     const [rows] = await conn.query(
       `SELECT id, name FROM debtors
-       WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?
+       WHERE file_id = ? AND deleted_at IS NULL
+         AND (assigned_agent_user_id = ? OR (assigned_agent_user_id IS NULL AND assigned_agent = ?))
        FOR UPDATE`,
-      [id, fromAgent.name]
+      [id, fromAgent.id, fromAgent.name]
     );
     movedRows = rows;
     if (movedRows.length > 0) {
       const [result] = await conn.query(
-        `UPDATE debtors SET assigned_agent = ?
-         WHERE file_id = ? AND deleted_at IS NULL AND assigned_agent = ?`,
-        [toAgent.name, id, fromAgent.name]
+        `UPDATE debtors SET assigned_agent = ?, assigned_agent_user_id = ?
+         WHERE file_id = ? AND deleted_at IS NULL
+           AND (assigned_agent_user_id = ? OR (assigned_agent_user_id IS NULL AND assigned_agent = ?))`,
+        [toAgent.name, toAgent.id, id, fromAgent.id, fromAgent.name]
       );
       caseCount = result.affectedRows || 0;
     }
@@ -860,7 +880,13 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
   const agents = [];
   for (const agentId of aIds) {
     const agent = await getAgentById(agentId);
-    if (agent) agents.push(agent);
+    if (!agent) continue;
+    if (!agent.isActive) {
+      const err = new Error(`${agent.name} is inactive and cannot receive case assignments`);
+      err.code = 'VALIDATION';
+      throw err;
+    }
+    agents.push(agent);
   }
   if (agents.length === 0) {
     const err = new Error('No valid agents selected');
@@ -877,7 +903,7 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
 
     // Only debtors that actually belong to this file are eligible.
     const [rows] = await conn.query(
-      `SELECT id, name, assigned_agent FROM debtors
+      `SELECT id, name, assigned_agent, assigned_agent_user_id FROM debtors
        WHERE file_id = ? AND deleted_at IS NULL AND id IN (?)
        ORDER BY id ASC
        FOR UPDATE`,
@@ -898,23 +924,28 @@ async function assignCases(fileId, debtorIds, agentIds, { performedBy } = {}) {
       const debtor = rows[i];
       const target = agents[i % agents.length];
       const prevName = debtor.assigned_agent || null;
+      const prevUserId = debtor.assigned_agent_user_id
+        ? Number(debtor.assigned_agent_user_id)
+        : null;
 
       if (prevName && prevName !== target.name) {
         lost.set(prevName, (lost.get(prevName) || 0) + 1);
       }
-      if (!prevName || prevName !== target.name) {
+      if (!prevUserId || prevUserId !== Number(target.id)) {
         gained.set(target.id, (gained.get(target.id) || 0) + 1);
       }
 
-      await conn.query('UPDATE debtors SET assigned_agent = ? WHERE id = ?', [
-        target.name,
-        debtor.id,
-      ]);
-      if (!prevName || prevName !== target.name) {
-        const actionType = prevName ? 'debtor.reassigned' : 'debtor.assigned';
+      await conn.query(
+        'UPDATE debtors SET assigned_agent = ?, assigned_agent_user_id = ? WHERE id = ?',
+        [target.name, target.id, debtor.id]
+      );
+      if (!prevUserId || prevUserId !== Number(target.id)) {
+        const actionType = prevName || prevUserId ? 'debtor.reassigned' : 'debtor.assigned';
         const metadata = {
           previousAgentName: prevName,
           agentName: target.name,
+          previousAgentUserId: prevUserId,
+          agentUserId: target.id,
         };
         debtorEvents.push({
           debtorId: debtor.id,
@@ -1029,7 +1060,7 @@ async function unassignCases(fileId, debtorIds, { performedBy } = {}) {
   }
 
   await pool.query(
-    `UPDATE debtors SET assigned_agent = NULL
+    `UPDATE debtors SET assigned_agent = NULL, assigned_agent_user_id = NULL
      WHERE file_id = ? AND deleted_at IS NULL AND id IN (?)`,
     [id, dIds]
   );

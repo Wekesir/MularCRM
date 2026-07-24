@@ -217,7 +217,11 @@ router.post('/', async (req, res) => {
 
 router.put('/:id', async (req, res) => {
   try {
-    const user = await updateUser(req.params.id, req.body);
+    const force = Boolean(req.query?.force || req.body?.force);
+    const user = await updateUser(req.params.id, req.body, {
+      performedBy: req.user,
+      force,
+    });
     if (!user) return res.status(404).json({ message: 'User not found' });
     if (user.error) {
       return res.status(400).json({ message: user.error, code: user.code });
@@ -233,6 +237,9 @@ router.put('/:id', async (req, res) => {
       entityId: String(user.id),
     }).catch(() => {});
   } catch (error) {
+    if (error.code === 'SUCCESSION_PENDING' || error.status === 409) {
+      return res.status(409).json({ message: error.message, code: error.code });
+    }
     res.status(500).json({ message: 'Failed to update user', detail: error.message });
   }
 });
@@ -240,7 +247,11 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const existing = await getUserById(req.params.id);
-    const result = await deleteUser(req.params.id);
+    const force = Boolean(req.query?.force || req.body?.force);
+    const result = await deleteUser(req.params.id, {
+      performedBy: req.user,
+      force,
+    });
     if (result.error) return res.status(400).json({ message: result.error });
 
     // Notify the deleted user via email + SMS. Non-blocking: failures do not
@@ -267,6 +278,13 @@ router.delete('/:id', async (req, res) => {
       metadata: { deletedUserId: existing?.id, email: existing?.email },
     }).catch(() => {});
   } catch (error) {
+    if (
+      error.code === 'PORTFOLIO_PENDING' ||
+      error.code === 'SUCCESSION_PENDING' ||
+      error.status === 409
+    ) {
+      return res.status(409).json({ message: error.message, code: error.code });
+    }
     res.status(500).json({ message: 'Failed to delete user', detail: error.message });
   }
 });

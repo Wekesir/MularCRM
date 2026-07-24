@@ -5,6 +5,7 @@ const {
   runDatabaseBackup,
   getLastBackupStatus,
   parseServiceAccountKey,
+  clearPendingBackup,
 } = require('../services/databaseBackupService');
 const { getBackupCronInfo } = require('../services/backupCronService');
 const {
@@ -69,6 +70,21 @@ router.post('/run', async (_req, res) => {
       driveFileId: error.driveFileId || lastRun.driveFileId || null,
       phase: error.phase || lastRun.phase,
       lastRun,
+    });
+  }
+});
+
+router.post('/pending/clear', async (_req, res) => {
+  try {
+    const result = await clearPendingBackup({ deleteDriveFile: true });
+    res.json({
+      ...result,
+      lastRun: await getLastBackupStatus(),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'Failed to discard pending backup',
+      lastRun: await getLastBackupStatus(),
     });
   }
 });

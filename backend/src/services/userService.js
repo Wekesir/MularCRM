@@ -291,7 +291,8 @@ async function updateUser(
     callCenterId,
     regionId,
     yeastarExtension,
-  }
+  },
+  { performedBy, force = false } = {}
 ) {
   const user = await getUserById(id);
   if (!user) return null;
@@ -306,6 +307,18 @@ async function updateUser(
   const nextRegion = regionId !== undefined ? regionId : user.regionId;
   const regionCheck = await validateRegionForRole(roleName, nextRegion);
   if (regionCheck.error) return regionCheck;
+
+  const nextActive = isActive ?? user.isActive;
+  if (user.isActive && nextActive === false) {
+    const { isSupervisorRole, isSeniorSupervisorRole } = require('../config/orgRoles');
+    if (isSupervisorRole(user) || isSeniorSupervisorRole(user)) {
+      const { assertStaffSuccessionClear } = require('./staffHandoffService');
+      await assertStaffSuccessionClear(id, {
+        allowSystemAdminOverride: force,
+        user: performedBy,
+      });
+    }
+  }
 
   const { hashPassword } = require('./passwordService');
   let passwordHash = undefined;
@@ -348,7 +361,7 @@ async function updateUser(
         : user.permissionOverrides
           ? JSON.stringify(user.permissionOverrides)
           : null,
-      isActive ?? user.isActive,
+      nextActive,
       phone !== undefined ? phone || null : user.phone,
       centerCheck.callCenterId,
       regionCheck.regionId,
@@ -362,10 +375,28 @@ async function updateUser(
   return getUserById(id);
 }
 
-async function deleteUser(id) {
+async function deleteUser(id, { performedBy, force = false } = {}) {
   const user = await getUserById(id);
   if (!user) return { error: 'User not found' };
   if (user.deletedAt) return { error: 'User is already deleted' };
+
+  const { isAgentRole, isSupervisorRole, isSeniorSupervisorRole } = require('../config/orgRoles');
+  if (isAgentRole(user)) {
+    const { assertNoOpenPortfolio } = require('./agentHandoffService');
+    await assertNoOpenPortfolio(id, {
+      allowSystemAdminOverride: force,
+      user: performedBy,
+    });
+  }
+  if (isSupervisorRole(user) || isSeniorSupervisorRole(user)) {
+    const { assertStaffSuccessionClear } = require('./staffHandoffService');
+    await assertStaffSuccessionClear(id, {
+      allowSystemAdminOverride: force,
+      user: performedBy,
+    });
+    const { endOpenCoveragesForUser } = require('./staffCoverageService');
+    await endOpenCoveragesForUser(id, { performedBy });
+  }
 
   await pool.query(
     'UPDATE users SET is_active = FALSE, deleted_at = NOW() WHERE id = ?',

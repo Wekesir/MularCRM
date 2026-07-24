@@ -260,18 +260,32 @@ async function getCallCenterStaff(id) {
     [id]
   );
 
+  let coverageByAbsent = new Map();
+  try {
+    const { getCoverageMapForCallCenter } = require('./staffCoverageService');
+    coverageByAbsent = await getCoverageMapForCallCenter(id);
+  } catch {
+    coverageByAbsent = new Map();
+  }
+
   return {
     callCenter: center,
     supervisors: rows
       .filter((r) => isSupervisorRole(r.role_name))
-      .map((r) => ({
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        phone: r.phone,
-        isActive: Boolean(r.is_active),
-        roleName: r.role_name,
-      })),
+      .map((r) => {
+        const coverage = coverageByAbsent.get(Number(r.id));
+        return {
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          isActive: Boolean(r.is_active),
+          roleName: r.role_name,
+          onLeave: Boolean(coverage && (coverage.status === 'active' || coverage.status === 'scheduled')),
+          coveredByName: coverage?.coveringUserName || null,
+          coverageStatus: coverage?.status || null,
+        };
+      }),
     agents: rows
       .filter((r) => AGENT_ROLE_NAMES.some((n) => n.toLowerCase() === String(r.role_name).toLowerCase()))
       .map((r) => ({

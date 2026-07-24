@@ -20,8 +20,19 @@ const {
   deleteSimCard,
 } = require('../services/agentSimCardService');
 const { recordActivityEvent } = require('../services/activityService');
+const {
+  listCoverages,
+  createCoverage,
+  endCoverage,
+  countActiveCoverages,
+} = require('../services/agentCoverageService');
+const {
+  handoffAgentPortfolio,
+  countAgentPortfolio,
+} = require('../services/agentHandoffService');
 const { requireAuth } = require('../middleware/requireAuth');
 const { requireSystemAdmin } = require('../middleware/requireSystemAdmin');
+const { requireCaseAssigner } = require('../middleware/requireCaseAssigner');
 
 function portfolioErrorStatus(error) {
   return (
@@ -243,6 +254,57 @@ router.delete('/me/sim-cards/:id', async (req, res) => {
   }
 });
 
+// Leave coverage — supervisors+ (must be registered before /:id)
+router.get('/coverages', requireCaseAssigner, async (req, res) => {
+  try {
+    const coverages = await listCoverages({
+      user: req.user,
+      status: req.query.status || undefined,
+      agentUserId: req.query.agentUserId || undefined,
+    });
+    res.json(coverages);
+  } catch (error) {
+    const status = error.status || (error.code === 'FORBIDDEN' ? 403 : 500);
+    res.status(status).json({ message: error.message, code: error.code });
+  }
+});
+
+router.get('/coverages/active-count', requireCaseAssigner, async (req, res) => {
+  try {
+    const count = await countActiveCoverages({ user: req.user });
+    res.json({ count });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to count coverages', detail: error.message });
+  }
+});
+
+router.post('/coverages', requireCaseAssigner, async (req, res) => {
+  try {
+    const coverage = await createCoverage(req.body || {}, { performedBy: req.user });
+    res.status(201).json(coverage);
+  } catch (error) {
+    const status =
+      error.status ||
+      (error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 400);
+    res.status(status).json({ message: error.message, code: error.code });
+  }
+});
+
+router.post('/coverages/:coverageId/end', requireCaseAssigner, async (req, res) => {
+  try {
+    const coverage = await endCoverage(req.params.coverageId, {
+      performedBy: req.user,
+      status: req.body?.status,
+    });
+    res.json(coverage);
+  } catch (error) {
+    const status =
+      error.status ||
+      (error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 400);
+    res.status(status).json({ message: error.message, code: error.code });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const agent = await getAgentById(req.params.id);
@@ -321,11 +383,46 @@ router.put('/:id/kpis', requireSystemAdmin, async (req, res) => {
   }
 });
 
-// PATCH /api/agents/:id/status  { isActive: boolean }  — system admins only
+// Portfolio handoff (resignation) — supervisors+
+router.get('/:id/portfolio-count', requireCaseAssigner, async (req, res) => {
+  try {
+    const agent = await getAgentById(req.params.id);
+    if (!agent) return res.status(404).json({ message: 'Agent not found' });
+    const counts = await countAgentPortfolio(agent.id, agent.name);
+    res.json(counts);
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to count portfolio', detail: error.message });
+  }
+});
+
+router.post('/:id/handoff', requireCaseAssigner, async (req, res) => {
+  try {
+    const result = await handoffAgentPortfolio(
+      req.params.id,
+      {
+        mode: req.body?.mode,
+        toAgentIds: req.body?.toAgentIds,
+      },
+      { performedBy: req.user, force: Boolean(req.body?.force) }
+    );
+    res.json(result);
+  } catch (error) {
+    const status =
+      error.status ||
+      (error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 400);
+    res.status(status).json({ message: error.message, code: error.code });
+  }
+});
+
+// PATCH /api/agents/:id/status  { isActive: boolean, force?: boolean }  — system admins only
 router.patch('/:id/status', requireSystemAdmin, async (req, res) => {
   try {
     const isActive = Boolean(req.body?.isActive);
-    const agent = await setAgentActiveStatus(req.params.id, isActive);
+    const force = Boolean(req.body?.force);
+    const agent = await setAgentActiveStatus(req.params.id, isActive, {
+      performedBy: req.user,
+      force,
+    });
     res.json(agent);
     recordActivityEvent({
       userId: req.user?.id,
@@ -339,6 +436,9 @@ router.patch('/:id/status', requireSystemAdmin, async (req, res) => {
   } catch (error) {
     if (error.code === 'NOT_FOUND') {
       return res.status(404).json({ message: error.message });
+    }
+    if (error.code === 'PORTFOLIO_PENDING' || error.status === 409) {
+      return res.status(409).json({ message: error.message, code: error.code });
     }
     res.status(500).json({ message: 'Failed to update agent status', detail: error.message });
   }

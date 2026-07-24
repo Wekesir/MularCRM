@@ -10,6 +10,10 @@ const {
   listVoiceCallsForDebtor,
 } = require('./africasTalkingVoiceService');
 const { startOutboundCall } = require('./dialerService');
+const {
+  getEffectivePortfolioAgentIds,
+  assertAgentCanAccessDebtor,
+} = require('./agentCoverageService');
 
 const CHANNELS = new Set(['call', 'sms', 'email']);
 
@@ -56,6 +60,13 @@ function normalizePortfolioRow(row) {
     accountNumber: row.account_number || null,
     loanId: row.loan_id || null,
     assignedAgent: row.assigned_agent || null,
+    assignedAgentUserId:
+      row.assigned_agent_user_id != null ? Number(row.assigned_agent_user_id) : null,
+    coveringForAgentName: row.covering_for_agent_name || null,
+    coveringForAgentUserId:
+      row.covering_for_agent_user_id != null
+        ? Number(row.covering_for_agent_user_id)
+        : null,
     loanAmount: toNumber(row.loan_amount),
     totalPaid: toNumber(row.total_paid),
     outstandingBalance: toNumber(row.outstanding_balance),
@@ -77,13 +88,30 @@ function normalizePortfolioRow(row) {
   };
 }
 
-function buildPortfolioFilters(agentName, filters = {}) {
+function buildPortfolioOwnerClause(user, effectiveIds) {
+  const ids = (effectiveIds || []).map(Number).filter(Boolean);
+  if (!ids.length) {
+    return { clause: '1=0', params: [] };
+  }
+  const placeholders = ids.map(() => '?').join(', ');
+  // Prefer user-id ownership; fall back to legacy name stamp for self only.
+  return {
+    clause: `(
+      d.assigned_agent_user_id IN (${placeholders})
+      OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = ?)
+    )`,
+    params: [...ids, String(user.name || '').trim()],
+  };
+}
+
+function buildPortfolioFilters(user, filters = {}, effectiveIds = []) {
+  const owner = buildPortfolioOwnerClause(user, effectiveIds);
   const clauses = [
     'd.deleted_at IS NULL',
     'd.is_closed = 0',
-    'd.assigned_agent = ?',
+    owner.clause,
   ];
-  const params = [agentName];
+  const params = [...owner.params];
 
   const search = String(filters.search || '').trim();
   if (search) {
@@ -201,34 +229,36 @@ const FROM_SQL = `
 `;
 
 async function listPortfolioBuckets(user) {
-  const agentName = String(user?.name || '').trim();
-  if (!agentName) return [];
+  requireAgentUser(user);
+  const effectiveIds = await getEffectivePortfolioAgentIds(user);
+  const owner = buildPortfolioOwnerClause(user, effectiveIds);
   const [rows] = await pool.query(
     `SELECT DISTINCT d.bucket AS bucket
      FROM debtors d
      WHERE d.deleted_at IS NULL
        AND d.is_closed = 0
-       AND d.assigned_agent = ?
+       AND ${owner.clause}
        AND d.bucket IS NOT NULL
        AND d.bucket <> ''
      ORDER BY d.bucket ASC`,
-    [agentName]
+    owner.params
   );
   return rows.map((r) => r.bucket).filter(Boolean);
 }
 
 async function listPortfolioClients(user) {
-  const agentName = String(user?.name || '').trim();
-  if (!agentName) return [];
+  requireAgentUser(user);
+  const effectiveIds = await getEffectivePortfolioAgentIds(user);
+  const owner = buildPortfolioOwnerClause(user, effectiveIds);
   const [rows] = await pool.query(
     `SELECT DISTINCT c.id, c.name
      FROM debtors d
      INNER JOIN clients c ON c.id = d.client_id AND c.deleted_at IS NULL
      WHERE d.deleted_at IS NULL
        AND d.is_closed = 0
-       AND d.assigned_agent = ?
+       AND ${owner.clause}
      ORDER BY c.name ASC`,
-    [agentName]
+    owner.params
   );
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
@@ -238,8 +268,10 @@ async function listPortfolio(user, filters = {}) {
   const page = Math.max(1, Number(filters.page) || 1);
   const pageSize = Math.min(100, Math.max(1, Number(filters.pageSize) || 25));
   const offset = (page - 1) * pageSize;
+  const effectiveIds = await getEffectivePortfolioAgentIds(user);
+  const selfId = Number(user.id);
 
-  const { where, params } = buildPortfolioFilters(user.name, filters);
+  const { where, params } = buildPortfolioFilters(user, filters, effectiveIds);
 
   const [countRows] = await pool.query(
     `SELECT COUNT(*) AS total ${FROM_SQL} ${where}`,
@@ -257,8 +289,19 @@ async function listPortfolio(user, filters = {}) {
             COALESCE(ca.attempt_count, 0) AS attempt_count,
             COALESCE(ca.has_call, 0) AS has_call,
             COALESCE(ca.has_sms, 0) AS has_sms,
-            COALESCE(ca.has_email, 0) AS has_email
+            COALESCE(ca.has_email, 0) AS has_email,
+            CASE
+              WHEN d.assigned_agent_user_id IS NOT NULL AND d.assigned_agent_user_id <> ?
+              THEN COALESCE(owner_u.name, d.assigned_agent)
+              ELSE NULL
+            END AS covering_for_agent_name,
+            CASE
+              WHEN d.assigned_agent_user_id IS NOT NULL AND d.assigned_agent_user_id <> ?
+              THEN d.assigned_agent_user_id
+              ELSE NULL
+            END AS covering_for_agent_user_id
      ${FROM_SQL}
+     LEFT JOIN users owner_u ON owner_u.id = d.assigned_agent_user_id
      ${where}
      ORDER BY
        CASE WHEN d.next_action_date IS NOT NULL AND d.next_action_date <= CURDATE() THEN 0 ELSE 1 END,
@@ -266,7 +309,7 @@ async function listPortfolio(user, filters = {}) {
        d.overdue_days DESC,
        d.name ASC
      LIMIT ? OFFSET ?`,
-    [...params, pageSize, offset]
+    [selfId, selfId, ...params, pageSize, offset]
   );
 
   return {
@@ -280,7 +323,8 @@ async function listPortfolio(user, filters = {}) {
 
 async function getPortfolioTotals(user, filters = {}) {
   requireAgentUser(user);
-  const { where, params } = buildPortfolioFilters(user.name, filters);
+  const effectiveIds = await getEffectivePortfolioAgentIds(user);
+  const { where, params } = buildPortfolioFilters(user, filters, effectiveIds);
 
   const [rows] = await pool.query(
     `SELECT
@@ -324,13 +368,22 @@ async function getAssignedDebtorOrThrow(user, debtorId) {
     err.status = 404;
     throw err;
   }
-  if (String(debtor.assigned_agent || '').trim() !== String(user.name || '').trim()) {
-    const err = new Error('This case is not assigned to you');
-    err.code = 'FORBIDDEN';
-    err.status = 403;
-    throw err;
-  }
+  const access = await assertAgentCanAccessDebtor(user, debtor);
+  debtor._portfolioAccess = access;
   return debtor;
+}
+
+/** Actor = covering agent; portfolio_owner = absent agent when working under leave coverage. */
+function coverageAuditMeta(user, debtor) {
+  const access = debtor?._portfolioAccess;
+  if (!access || access.mode !== 'coverage') return {};
+  return {
+    actingAsCoverage: true,
+    actorUserId: user?.id || null,
+    actorUserName: user?.name || null,
+    portfolioOwnerUserId: access.portfolioOwnerUserId || null,
+    portfolioOwnerName: access.portfolioOwnerName || debtor.assigned_agent || null,
+  };
 }
 
 function buildTemplateValues(debtor, agent) {
@@ -450,6 +503,7 @@ async function sendPortfolioSms(user, debtorId, payload = {}) {
       sent: Boolean(result.sent),
       notes: payload.notes || null,
       templateId: templateId || null,
+      ...coverageAuditMeta(user, debtor),
     },
   }).catch(() => {});
 
@@ -522,6 +576,7 @@ async function sendPortfolioEmail(user, debtorId, payload = {}) {
       notes: payload.notes || null,
       templateId: templateId || null,
       subject,
+      ...coverageAuditMeta(user, debtor),
     },
   }).catch(() => {});
 
@@ -627,6 +682,7 @@ async function logPortfolioResponse(user, debtorId, payload = {}) {
       previousContactStatusName,
       notes,
       nextActionDate: reminderDate,
+      ...coverageAuditMeta(user, debtor),
       promisedAmount: ptp?.promisedAmount ?? null,
       promiseDate: ptp?.promiseDate ?? null,
       reminderDate: ptp?.reminderDate ?? reminderDate,

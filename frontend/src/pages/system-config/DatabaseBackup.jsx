@@ -18,11 +18,13 @@ import {
   RefreshCw,
   Shield,
   Timer,
+  Trash2,
   Upload,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LoadingButton from '../../components/LoadingButton';
 import {
+  clearPendingBackup,
   disconnectBackupGoogle,
   fetchBackupGoogleAuthUrl,
   fetchBackupStatus,
@@ -108,6 +110,7 @@ function DatabaseBackup() {
   const [running, setRunning] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [status, setStatus] = useState(null);
 
@@ -236,6 +239,20 @@ function DatabaseBackup() {
     }
   };
 
+  const handleDiscardPending = async () => {
+    setDiscarding(true);
+    try {
+      const result = await clearPendingBackup();
+      toast.success(result.message || 'Pending backup discarded');
+      await refreshStatus(true);
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to discard pending backup');
+      await refreshStatus(true);
+    } finally {
+      setDiscarding(false);
+    }
+  };
+
   const handleConnectGoogle = async () => {
     setConnecting(true);
     try {
@@ -321,6 +338,7 @@ function DatabaseBackup() {
                   <p className="bk-status-card-desc" style={{ marginTop: '0.35rem' }}>
                     Connect Google below to auto-accept ownership, or search Drive for{' '}
                     <code>pendingowner:me</code> and accept manually, then complete the upload.
+                    Or discard this pending file to start a new backup.
                   </p>
                 )}
                 {oauthConnected && (
@@ -345,6 +363,18 @@ function DatabaseBackup() {
                   aria-hidden="true"
                 />
               </button>
+              {awaitingOwnership && (
+                <LoadingButton
+                  type="button"
+                  className="btn-danger-sm"
+                  loading={discarding}
+                  loadingText="Discarding…"
+                  onClick={handleDiscardPending}
+                >
+                  <Trash2 className="icon-sm" aria-hidden="true" />
+                  Discard pending
+                </LoadingButton>
+              )}
               <LoadingButton
                 type="button"
                 className="btn-primary btn-sm"

@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { google } = require('googleapis');
+const pool = require('../db/pool');
 const { getSystemConfig, updateSystemConfig } = require('./systemConfigService');
 const {
   hasOwnerOAuth,
@@ -44,18 +45,97 @@ function readPendingUpload(backup) {
 }
 
 async function persistPendingUpload(pending) {
-  await updateSystemConfig({
-    backup: {
-      pendingUpload: pending
-        ? {
-            driveFileId: pending.driveFileId,
-            fileName: pending.fileName || null,
-            ownerEmail: pending.ownerEmail || null,
-            createdAt: pending.createdAt || new Date().toISOString(),
-          }
-        : null,
-    },
-  });
+  if (pending) {
+    await updateSystemConfig({
+      backup: {
+        pendingUpload: {
+          driveFileId: pending.driveFileId,
+          fileName: pending.fileName || null,
+          ownerEmail: pending.ownerEmail || null,
+          createdAt: pending.createdAt || new Date().toISOString(),
+        },
+      },
+    });
+    return;
+  }
+
+  // deepMerge + preserveSecrets can keep prior objects; force-clear with a full write.
+  const existing = await getSystemConfig({ mask: false });
+  const next = JSON.parse(JSON.stringify(existing));
+  if (!next.backup) next.backup = {};
+  next.backup.pendingUpload = null;
+  await pool.query(
+    'INSERT INTO system_config (id, config) VALUES (1, ?) ON DUPLICATE KEY UPDATE config = VALUES(config)',
+    [JSON.stringify(next)]
+  );
+}
+
+async function deleteDriveFileBestEffort(driveFileId) {
+  if (!driveFileId) return { deleted: false };
+  try {
+    const config = await getSystemConfig({ mask: false });
+    const key = config.backup?.googleDrive?.serviceAccountKey;
+    if (!key) return { deleted: false, reason: 'no service account key' };
+    const { drive } = createDriveClient(key);
+    await drive.files.delete({ fileId: driveFileId, supportsAllDrives: true });
+    return { deleted: true };
+  } catch (error) {
+    const message =
+      error?.errors?.[0]?.message ||
+      error?.response?.data?.error?.message ||
+      error?.message ||
+      'delete failed';
+    console.warn(`[backup] could not delete Drive file ${driveFileId}: ${message}`);
+    return { deleted: false, reason: message };
+  }
+}
+
+/**
+ * Discard a pending ownership backup so a fresh Run now can create a new file.
+ */
+async function clearPendingBackup({ deleteDriveFile = true } = {}) {
+  if (lastStatus.running) {
+    throw httpError('A backup is already running', 409);
+  }
+
+  const config = await getSystemConfig({ mask: false });
+  const pending =
+    readPendingUpload(config.backup) ||
+    (lastStatus.awaitingOwnership && lastStatus.driveFileId
+      ? {
+          driveFileId: lastStatus.driveFileId,
+          fileName: lastStatus.fileName,
+          ownerEmail: lastStatus.ownerEmail,
+        }
+      : null);
+
+  let driveDelete = { deleted: false };
+  if (deleteDriveFile && pending?.driveFileId) {
+    driveDelete = await deleteDriveFileBestEffort(pending.driveFileId);
+  }
+
+  await persistPendingUpload(null);
+
+  const result = {
+    ok: null,
+    running: false,
+    phase: 'idle',
+    awaitingOwnership: false,
+    startedAt: null,
+    finishedAt: null,
+    fileName: null,
+    driveFileId: null,
+    ownerEmail: pending?.ownerEmail || lastStatus.ownerEmail || null,
+    message: pending
+      ? `Discarded pending backup${pending.fileName ? ` (${pending.fileName})` : ''}. You can run a new backup now.`
+      : 'No pending backup to discard.',
+    discardedFileName: pending?.fileName || null,
+    discardedDriveFileId: pending?.driveFileId || null,
+    driveFileDeleted: Boolean(driveDelete.deleted),
+  };
+  setStatus(result);
+  console.info(`[backup] ${result.message}`);
+  return result;
 }
 
 async function hydratePendingFromConfig() {
@@ -755,4 +835,5 @@ module.exports = {
   runDatabaseBackup,
   getLastBackupStatus,
   parseServiceAccountKey,
+  clearPendingBackup,
 };

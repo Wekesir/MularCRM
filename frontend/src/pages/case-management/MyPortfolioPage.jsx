@@ -487,6 +487,11 @@ function MyPortfolioPage() {
                             {item.clientName || '—'}
                             {item.accountNumber ? ` · ${item.accountNumber}` : ''}
                           </p>
+                          {item.coveringForAgentName && (
+                            <span className="mp-covering-badge">
+                              Covering for {item.coveringForAgentName}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>

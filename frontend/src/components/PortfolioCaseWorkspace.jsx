@@ -252,6 +252,11 @@ function PortfolioCaseWorkspace({
               <p className="pcw-header-sub truncate">
                 {[meta.clientName, meta.accountNumber].filter(Boolean).join(' · ') || 'Portfolio case'}
               </p>
+              {meta.coveringForAgentName && (
+                <span className="mp-covering-badge mt-1">
+                  Covering for {meta.coveringForAgentName}
+                </span>
+              )}
             </div>
             {meta.contactStatusName && (
               <span className="pcw-status-pill">{meta.contactStatusName}</span>

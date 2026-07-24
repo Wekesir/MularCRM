@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Building2,
   Calendar,
+  CalendarClock,
   CheckCircle2,
   Headphones,
   RefreshCw,
@@ -110,6 +111,8 @@ function SeniorSupervisorDashboard() {
   const summary = data?.summary || {};
   const hasUnassigned = Number(summary.unassignedClients || 0) > 0;
   const hasUnbound = Number(summary.unboundAgents || 0) > 0;
+  const hasStaffCoverage = Number(summary.activeStaffCoverages || 0) > 0;
+  const hasCentersWithoutSupervisor = Number(summary.centersWithoutSupervisor || 0) > 0;
   const callCenters = data?.callCenters || [];
 
   const todayFormatted = new Date().toLocaleDateString(undefined, {
@@ -196,7 +199,7 @@ function SeniorSupervisorDashboard() {
       </div>
 
       {/* ── Alerts ───────────────────────────────────────── */}
-      {(hasUnassigned || hasUnbound) && (
+      {(hasUnassigned || hasUnbound || hasStaffCoverage || hasCentersWithoutSupervisor) && (
         <div className="ss-alerts">
           {hasUnassigned && (
             <div className="ss-alert ss-alert--warn">
@@ -229,6 +232,40 @@ function SeniorSupervisorDashboard() {
               </div>
               <Link to="/management/agent-management" className="ss-alert-link">
                 Fix now <ArrowRight className="icon-sm" />
+              </Link>
+            </div>
+          )}
+          {hasStaffCoverage && (
+            <div className="ss-alert ss-alert--info">
+              <CalendarClock className="ss-alert-icon" />
+              <div className="ss-alert-body">
+                <p className="ss-alert-title">
+                  {formatCount(summary.activeStaffCoverages)} supervisor leave coverage
+                  {Number(summary.activeStaffCoverages) !== 1 ? 's' : ''} active
+                </p>
+                <p className="ss-alert-desc">
+                  Covering users can act for those call centers until coverage ends.
+                </p>
+              </div>
+              <Link to="/users" className="ss-alert-link">
+                Manage <ArrowRight className="icon-sm" />
+              </Link>
+            </div>
+          )}
+          {hasCentersWithoutSupervisor && (
+            <div className="ss-alert ss-alert--warn">
+              <UserCog className="ss-alert-icon" />
+              <div className="ss-alert-body">
+                <p className="ss-alert-title">
+                  {formatCount(summary.centersWithoutSupervisor)} call center
+                  {Number(summary.centersWithoutSupervisor) !== 1 ? 's' : ''} with no supervisor
+                </p>
+                <p className="ss-alert-desc">
+                  Bind a supervisor or start leave coverage so case assignment and approvals continue.
+                </p>
+              </div>
+              <Link to="/management/call-centers" className="ss-alert-link">
+                Review <ArrowRight className="icon-sm" />
               </Link>
             </div>
           )}

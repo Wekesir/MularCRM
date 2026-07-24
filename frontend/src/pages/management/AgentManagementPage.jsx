@@ -16,12 +16,17 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  CalendarClock,
+  CalendarX2,
+  ArrowRightLeft,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'react-toastify';
 import SectionHeader from '../../components/SectionHeader';
 import AgentProfileModal from '../../components/AgentProfileModal';
 import AgentKpiModal from '../../components/AgentKpiModal';
+import AgentCoverageModal from '../../components/AgentCoverageModal';
+import AgentHandoffModal from '../../components/AgentHandoffModal';
 import ActionMenu from '../../components/ActionMenu';
 import { usePageActions } from '../../context/PageActionsContext';
 import { useSystemConfig } from '../../context/SystemConfigContext';
@@ -32,6 +37,11 @@ import {
   updateAgentProfile,
   setAgentStatus,
   updateAgentKpis,
+  fetchAgentCoverages,
+  createAgentCoverage,
+  endAgentCoverage,
+  fetchAgentPortfolioCount,
+  handoffAgentPortfolio,
 } from '../../api/agents';
 import { fetchAgentExperienceLevels } from '../../api/agentExperienceLevels';
 import { fetchAgentExpertiseAreas } from '../../api/agentExpertiseAreas';
@@ -78,10 +88,11 @@ function AgentManagementPage() {
   const { setActions } = usePageActions();
   const { currencySymbol } = useSystemConfig();
   const { confirm } = useConfirm();
-  const { isSystemAdmin } = usePermissions();
+  const { isSystemAdmin, canAssignCases } = usePermissions();
 
   const [isLoading, setIsLoading] = useState(true);
   const [agents, setAgents] = useState([]);
+  const [coverages, setCoverages] = useState([]);
   const [experienceLevels, setExperienceLevels] = useState([]);
   const [expertiseAreas, setExpertiseAreas] = useState([]);
 
@@ -99,10 +110,17 @@ function AgentManagementPage() {
   const [isSavingKpis, setIsSavingKpis] = useState(false);
   const [workingId, setWorkingId] = useState(null);
 
+  const [coverageAgent, setCoverageAgent] = useState(null);
+  const [coveragePortfolio, setCoveragePortfolio] = useState(null);
+  const [isSavingCoverage, setIsSavingCoverage] = useState(false);
+  const [handoffAgent, setHandoffAgent] = useState(null);
+  const [handoffPortfolio, setHandoffPortfolio] = useState(null);
+  const [isSavingHandoff, setIsSavingHandoff] = useState(false);
+
   const load = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [agentData, levels, areas] = await Promise.all([
+      const [agentData, levels, areas, coverageData] = await Promise.all([
         fetchAgents({
           experience: appliedFilters.experience || undefined,
           expertise: appliedFilters.expertise || undefined,
@@ -110,16 +128,30 @@ function AgentManagementPage() {
         }),
         fetchAgentExperienceLevels(),
         fetchAgentExpertiseAreas(),
+        canAssignCases
+          ? fetchAgentCoverages().catch(() => [])
+          : Promise.resolve([]),
       ]);
       setAgents(agentData);
       setExperienceLevels(levels);
       setExpertiseAreas(areas);
+      setCoverages(Array.isArray(coverageData) ? coverageData : []);
     } catch (error) {
       toast.error(error.response?.data?.message || 'Failed to load agents');
     } finally {
       setIsLoading(false);
     }
-  }, [appliedFilters.experience, appliedFilters.expertise, appliedFilters.workload]);
+  }, [appliedFilters.experience, appliedFilters.expertise, appliedFilters.workload, canAssignCases]);
+
+  const coverageByAbsentId = useMemo(() => {
+    const map = new Map();
+    for (const c of coverages) {
+      if (c.status === 'active' || c.status === 'scheduled') {
+        map.set(Number(c.absentAgentUserId), c);
+      }
+    }
+    return map;
+  }, [coverages]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -211,7 +243,11 @@ function AgentManagementPage() {
       setAgents((prev) => prev.map((a) => (a.id === updated.id ? { ...a, ...updated } : a)));
       toast.success(`${updated.name} ${next ? 'activated' : 'deactivated'}`);
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to update agent status');
+      const msg = err.response?.data?.message || 'Failed to update agent status';
+      toast.error(msg);
+      if (err.response?.status === 409 || err.response?.data?.code === 'PORTFOLIO_PENDING') {
+        toast.info('Complete a portfolio handoff first, then deactivate.');
+      }
     } finally {
       setWorkingId(null);
     }
@@ -224,11 +260,161 @@ function AgentManagementPage() {
       message: `${activating ? 'Activate' : 'Deactivate'} ${agent.name}?`,
       detail: activating
         ? 'The agent will be able to log in and receive case assignments again.'
-        : 'The agent will no longer be able to log in. Existing case assignments are preserved.',
+        : 'The agent will no longer be able to log in. Open portfolios must be handed off first.',
       confirmText: activating ? 'Activate' : 'Deactivate',
       confirmLoadingText: activating ? 'Activating…' : 'Deactivating…',
       onConfirm: () => handleToggleStatus(agent),
     });
+  };
+
+  const openCoverageModal = async (agent) => {
+    setCoverageAgent(agent);
+    setCoveragePortfolio(null);
+    try {
+      const counts = await fetchAgentPortfolioCount(agent.id);
+      setCoveragePortfolio(counts);
+    } catch {
+      setCoveragePortfolio(null);
+    }
+  };
+
+  const handleCreateCoverage = async (payload) => {
+    setIsSavingCoverage(true);
+    try {
+      await createAgentCoverage(payload);
+      toast.success(`Leave coverage started for ${coverageAgent?.name}`);
+      setCoverageAgent(null);
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to start coverage');
+    } finally {
+      setIsSavingCoverage(false);
+    }
+  };
+
+  const confirmEndCoverage = (agent) => {
+    const coverage = coverageByAbsentId.get(Number(agent.id));
+    if (!coverage) {
+      toast.info('No active or scheduled coverage for this agent');
+      return;
+    }
+    confirm({
+      title: 'End leave coverage',
+      message: `End coverage for ${agent.name}?`,
+      detail: `${coverage.coveringAgentName || 'The covering agent'} will lose access to this portfolio. Cases remain assigned to ${agent.name}.`,
+      confirmText: 'End coverage',
+      confirmLoadingText: 'Ending…',
+      onConfirm: async () => {
+        setWorkingId(agent.id);
+        try {
+          await endAgentCoverage(coverage.id);
+          toast.success(`Coverage ended for ${agent.name}`);
+          await load();
+        } catch (err) {
+          toast.error(err.response?.data?.message || 'Failed to end coverage');
+        } finally {
+          setWorkingId(null);
+        }
+      },
+    });
+  };
+
+  const openHandoffModal = async (agent) => {
+    setHandoffAgent(agent);
+    setHandoffPortfolio(null);
+    try {
+      const counts = await fetchAgentPortfolioCount(agent.id);
+      setHandoffPortfolio(counts);
+    } catch {
+      setHandoffPortfolio(null);
+    }
+  };
+
+  const handleHandoff = async (payload) => {
+    if (!handoffAgent) return;
+    setIsSavingHandoff(true);
+    try {
+      const result = await handoffAgentPortfolio(handoffAgent.id, payload);
+      toast.success(
+        result.mode === 'unassign'
+          ? `Unassigned ${result.debtorCount} case(s) from ${handoffAgent.name}`
+          : `Transferred ${result.debtorCount} case(s) from ${handoffAgent.name}`
+      );
+      setHandoffAgent(null);
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to hand off portfolio');
+    } finally {
+      setIsSavingHandoff(false);
+    }
+  };
+
+  const buildActionItems = (agent) => {
+    const items = [];
+    if (isSystemAdmin) {
+      items.push(
+        {
+          key: 'edit',
+          label: 'Edit Profile',
+          icon: Pencil,
+          onClick: () => setEditingAgent(agent),
+        },
+        {
+          key: 'kpis',
+          label: 'Agent KPIs',
+          icon: Target,
+          onClick: () => setKpiAgent(agent),
+        }
+      );
+    }
+    if (canAssignCases) {
+      const activeCoverage = coverageByAbsentId.get(Number(agent.id));
+      if (!activeCoverage) {
+        items.push({
+          key: 'coverage-start',
+          label: 'Start leave coverage',
+          icon: CalendarClock,
+          onClick: () => openCoverageModal(agent),
+          disabled: workingId === agent.id,
+        });
+      } else {
+        items.push({
+          key: 'coverage-end',
+          label: 'End coverage',
+          icon: CalendarX2,
+          onClick: () => confirmEndCoverage(agent),
+          disabled: workingId === agent.id,
+        });
+      }
+      items.push({
+        key: 'handoff',
+        label: 'Handoff portfolio',
+        icon: ArrowRightLeft,
+        onClick: () => openHandoffModal(agent),
+        disabled: workingId === agent.id,
+      });
+    }
+    if (isSystemAdmin) {
+      items.push(
+        agent.isActive
+          ? {
+              key: 'deactivate',
+              label: 'Deactivate',
+              icon: UserX,
+              danger: true,
+              onClick: () => confirmToggleStatus(agent),
+              disabled: workingId === agent.id,
+            }
+          : {
+              key: 'activate',
+              label: 'Activate',
+              icon: UserCheck,
+              onClick: () => confirmToggleStatus(agent),
+              disabled: workingId === agent.id,
+            }
+      );
+    }
+    return items;
   };
 
   const handleExport = () => {
@@ -297,7 +483,8 @@ function AgentManagementPage() {
     return () => setActions(null);
   }, [setActions, load, isSystemAdmin, navigate, showFilters, activeFilterCount, setShowFilters]);
 
-  const colCount = isSystemAdmin ? 12 : 11; // # + agent + call center + 8 metrics (+ actions)
+  const showActions = isSystemAdmin || canAssignCases;
+  const colCount = showActions ? 12 : 11; // # + agent + call center + 8 metrics (+ actions)
 
   return (
     <div className="cm-page">
@@ -428,7 +615,7 @@ function AgentManagementPage() {
                 <th className="cm-th cm-th-num">SMS Sent</th>
                 <th className="cm-th cm-th-num">Emails Sent</th>
                 <th className="cm-th cm-th-num">WhatsApp</th>
-                {isSystemAdmin && <th className="cm-th cm-th-actions">Actions</th>}
+                {showActions && <th className="cm-th cm-th-actions">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -471,6 +658,9 @@ function AgentManagementPage() {
                             {agent.experience && <span className="ama-tag">{agent.experience}</span>}
                             {agent.expertise && <span className="ama-tag">{agent.expertise}</span>}
                             {agent.workload && <span className="ama-tag ama-tag--workload">{agent.workload}</span>}
+                            {coverageByAbsentId.has(Number(agent.id)) && (
+                              <span className="ama-tag ama-tag--coverage">On leave</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -490,40 +680,11 @@ function AgentManagementPage() {
                     <td className="cm-td cm-td-num"><MetricCell value={agent.smsSent} /></td>
                     <td className="cm-td cm-td-num"><MetricCell value={agent.emailsSent} /></td>
                     <td className="cm-td cm-td-num"><MetricCell value={agent.whatsapp} /></td>
-                    {isSystemAdmin && (
+                    {showActions && (
                       <td className="cm-td cm-td-actions">
                         <ActionMenu
                           ariaLabel={`Actions for ${agent.name}`}
-                          items={[
-                            {
-                              key: 'edit',
-                              label: 'Edit Profile',
-                              icon: Pencil,
-                              onClick: () => setEditingAgent(agent),
-                            },
-                            {
-                              key: 'kpis',
-                              label: 'Agent KPIs',
-                              icon: Target,
-                              onClick: () => setKpiAgent(agent),
-                            },
-                            agent.isActive
-                              ? {
-                                  key: 'deactivate',
-                                  label: 'Deactivate',
-                                  icon: UserX,
-                                  danger: true,
-                                  onClick: () => confirmToggleStatus(agent),
-                                  disabled: workingId === agent.id,
-                                }
-                              : {
-                                  key: 'activate',
-                                  label: 'Activate',
-                                  icon: UserCheck,
-                                  onClick: () => confirmToggleStatus(agent),
-                                  disabled: workingId === agent.id,
-                                },
-                          ]}
+                          items={buildActionItems(agent)}
                         />
                       </td>
                     )}
@@ -586,6 +747,26 @@ function AgentManagementPage() {
         currencySymbol={currencySymbol}
         onClose={() => setKpiAgent(null)}
         onSave={handleSaveKpis}
+      />
+
+      <AgentCoverageModal
+        open={Boolean(coverageAgent)}
+        absentAgent={coverageAgent}
+        agents={agents}
+        portfolioCount={coveragePortfolio}
+        isSaving={isSavingCoverage}
+        onClose={() => setCoverageAgent(null)}
+        onSave={handleCreateCoverage}
+      />
+
+      <AgentHandoffModal
+        open={Boolean(handoffAgent)}
+        fromAgent={handoffAgent}
+        agents={agents}
+        portfolioCount={handoffPortfolio}
+        isSaving={isSavingHandoff}
+        onClose={() => setHandoffAgent(null)}
+        onSave={handleHandoff}
       />
     </div>
   );

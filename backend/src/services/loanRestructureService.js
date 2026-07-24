@@ -263,11 +263,9 @@ async function assertAgentOwnsDebtor(user, debtorId) {
     err.status = 404;
     throw err;
   }
-  if (String(debtor.assigned_agent || '').trim() !== String(user.name || '').trim()) {
-    const err = new Error('This case is not assigned to you');
-    err.code = 'FORBIDDEN';
-    err.status = 403;
-    throw err;
+  {
+    const { assertAgentCanAccessDebtor } = require('./agentCoverageService');
+    await assertAgentCanAccessDebtor(user, debtor);
   }
   if (Number(debtor.is_closed) === 1) {
     const err = new Error('Cannot restructure a closed case');
@@ -307,10 +305,19 @@ async function notifyCenterSupervisors(agentId, title, message) {
     [Number(centerId), SUPERVISOR_ROLE_NAMES]
   );
 
+  const recipientIds = new Set(supervisors.map((s) => Number(s.id)));
+  try {
+    const { listCoveringUserIdsForCallCenter } = require('./staffCoverageService');
+    const coveringIds = await listCoveringUserIdsForCallCenter(centerId);
+    for (const id of coveringIds) recipientIds.add(Number(id));
+  } catch {
+    // staff_coverages may not exist yet during early boot
+  }
+
   await Promise.all(
-    supervisors.map((s) =>
+    Array.from(recipientIds).map((userId) =>
       createNotification({
-        userId: s.id,
+        userId,
         title,
         message,
         type: 'info',

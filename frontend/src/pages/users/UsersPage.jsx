@@ -3,12 +3,22 @@ import { Plus, RefreshCw, ArchiveRestore } from 'lucide-react';
 import { toast } from 'react-toastify';
 import LazyDataTable from '../../components/LazyDataTable';
 import UserFormModal from '../../components/UserFormModal';
+import StaffCoverageModal from '../../components/StaffCoverageModal';
+import StaffHandoffModal from '../../components/StaffHandoffModal';
 import {
   createUser,
   deleteUser,
   restoreUser,
   updateUser,
+  fetchUsers,
 } from '../../api/users';
+import {
+  fetchStaffCoverages,
+  createStaffCoverage,
+  endStaffCoverage,
+  fetchStaffSuccession,
+  handoffStaffRole,
+} from '../../api/staff';
 import { fetchPermissionRegistry, fetchRoles } from '../../api/accessControl';
 import { fetchCallCenters } from '../../api/callCenters';
 import { fetchRegions } from '../../api/regions';
@@ -24,6 +34,10 @@ const SUPERVISOR_ROLE_KEYS = new Set([
   'manager',
   'call centre supervisor',
   'external agent supervisor',
+]);
+const SENIOR_SUPERVISOR_ROLE_KEYS = new Set([
+  'senior supervisor',
+  'tenant administrator',
 ]);
 
 function roleNeedsCallCenter(roleName) {
@@ -76,12 +90,22 @@ function escapeHtml(str) {
 
 function UsersPage() {
   const { confirm } = useConfirm();
-  const { isSystemAdmin } = usePermissions();
+  const { isSystemAdmin, isSeniorSupervisor, isRegionalManager } = usePermissions();
   const { setActions } = usePageActions();
+  const canManageSupervisorStaff = isSystemAdmin || isSeniorSupervisor || isRegionalManager;
+  const canManageSeniorStaff = isSystemAdmin;
+
   const [activeTab, setActiveTab] = useState('users');
   const [registry, setRegistry] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [staffCoverages, setStaffCoverages] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [coverageUser, setCoverageUser] = useState(null);
+  const [isSavingCoverage, setIsSavingCoverage] = useState(false);
+  const [handoffUser, setHandoffUser] = useState(null);
+  const [handoffSuccession, setHandoffSuccession] = useState(null);
+  const [isSavingHandoff, setIsSavingHandoff] = useState(false);
   const [userForm, setUserForm] = useState({
     name: '',
     email: '',
@@ -121,6 +145,37 @@ function UsersPage() {
       })
       .catch(() => toast.error('Failed to load user management data'));
   }, []);
+
+  const loadStaffMeta = useCallback(async () => {
+    if (!canManageSupervisorStaff && !canManageSeniorStaff) {
+      setStaffCoverages([]);
+      return;
+    }
+    try {
+      const [usersData, coverages] = await Promise.all([
+        fetchUsers().catch(() => []),
+        fetchStaffCoverages().catch(() => []),
+      ]);
+      setAllUsers(Array.isArray(usersData) ? usersData : []);
+      setStaffCoverages(Array.isArray(coverages) ? coverages : []);
+    } catch {
+      setStaffCoverages([]);
+    }
+  }, [canManageSupervisorStaff, canManageSeniorStaff]);
+
+  useEffect(() => {
+    loadStaffMeta();
+  }, [loadStaffMeta, usersRefreshKey]);
+
+  const coverageByAbsentId = useMemo(() => {
+    const map = new Map();
+    for (const c of staffCoverages) {
+      if (c.status === 'active' || c.status === 'scheduled') {
+        map.set(Number(c.absentUserId), c);
+      }
+    }
+    return map;
+  }, [staffCoverages]);
 
   const refreshUsersTable = useCallback(() => setUsersRefreshKey((k) => k + 1), []);
   const refreshDeletedUsersTable = useCallback(
@@ -277,11 +332,15 @@ function UsersPage() {
   };
 
   const handleDeleteUser = async (id, row) => {
+    const role = String(row?.roleName || '').trim().toLowerCase();
+    const needsSuccession =
+      SUPERVISOR_ROLE_KEYS.has(role) || SENIOR_SUPERVISOR_ROLE_KEYS.has(role);
     await confirm({
       title: 'Delete user',
       message: row?.name ? `Delete user "${row.name}"?` : 'Delete this user?',
-      detail:
-        'This user will no longer be able to sign in. Their account is soft-deleted and can be restored later from the Deleted Users tab. They will be notified by email and SMS.',
+      detail: needsSuccession
+        ? 'This user will no longer be able to sign in. If they are the last supervisor for a call center (or last Senior Supervisor), complete a succession handoff first.'
+        : 'This user will no longer be able to sign in. Their account is soft-deleted and can be restored later from the Deleted Users tab. They will be notified by email and SMS.',
       confirmText: 'Delete User',
       confirmLoadingText: 'Deleting…',
       onConfirm: async () => {
@@ -300,14 +359,89 @@ function UsersPage() {
           }
           refreshUsersTable();
           refreshDeletedUsersTable();
+          loadStaffMeta();
         } catch (error) {
+          const code = error.response?.data?.code;
           toast.error(error.response?.data?.message || 'Failed to delete user');
+          if (code === 'SUCCESSION_PENDING' || code === 'PORTFOLIO_PENDING') {
+            toast.info('Complete a handoff first, then delete.');
+          }
           throw error;
         } finally {
           setLoadingAction(null);
         }
       },
     });
+  };
+
+  const openStaffCoverage = (row) => setCoverageUser(row);
+
+  const confirmEndStaffCoverage = (row) => {
+    const coverage = coverageByAbsentId.get(Number(row.id));
+    if (!coverage) {
+      toast.info('No active or scheduled coverage for this user');
+      return;
+    }
+    confirm({
+      title: 'End leave coverage',
+      message: `End coverage for ${row.name}?`,
+      detail: `${coverage.coveringUserName || 'The covering user'} will lose acting authority for this role scope.`,
+      confirmText: 'End coverage',
+      confirmLoadingText: 'Ending…',
+      onConfirm: async () => {
+        try {
+          await endStaffCoverage(coverage.id);
+          toast.success(`Coverage ended for ${row.name}`);
+          loadStaffMeta();
+          refreshUsersTable();
+        } catch (error) {
+          toast.error(error.response?.data?.message || 'Failed to end coverage');
+          throw error;
+        }
+      },
+    });
+  };
+
+  const openStaffHandoff = async (row) => {
+    setHandoffUser(row);
+    setHandoffSuccession(null);
+    try {
+      const status = await fetchStaffSuccession(row.id);
+      setHandoffSuccession(status);
+    } catch {
+      setHandoffSuccession(null);
+    }
+  };
+
+  const handleCreateStaffCoverage = async (payload) => {
+    setIsSavingCoverage(true);
+    try {
+      await createStaffCoverage(payload);
+      toast.success(`Leave coverage started for ${coverageUser?.name}`);
+      setCoverageUser(null);
+      loadStaffMeta();
+      refreshUsersTable();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to start coverage');
+    } finally {
+      setIsSavingCoverage(false);
+    }
+  };
+
+  const handleStaffHandoff = async (payload) => {
+    if (!handoffUser) return;
+    setIsSavingHandoff(true);
+    try {
+      await handoffStaffRole(handoffUser.id, payload);
+      toast.success(`Succession completed for ${handoffUser.name}`);
+      setHandoffUser(null);
+      loadStaffMeta();
+      refreshUsersTable();
+    } catch (error) {
+      toast.error(error.response?.data?.message || 'Failed to hand off role');
+    } finally {
+      setIsSavingHandoff(false);
+    }
   };
 
   const handleRestoreUser = async (id, row) => {
@@ -359,9 +493,12 @@ function UsersPage() {
     (action, row) => {
       if (action === 'delete') handleDeleteUser(row.id, row);
       if (action === 'edit') selectUser(row);
+      if (action === 'coverage-start') openStaffCoverage(row);
+      if (action === 'coverage-end') confirmEndStaffCoverage(row);
+      if (action === 'handoff') openStaffHandoff(row);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectUser]
+    [selectUser, coverageByAbsentId]
   );
 
   const handleDeletedUserAction = useCallback(
@@ -414,12 +551,32 @@ function UsersPage() {
         title: 'Actions',
         orderable: false,
         searchable: false,
-        render: () =>
-          `<button type="button" class="btn-table" data-action="edit">Edit</button>
-           <button type="button" class="btn-table btn-table-danger" data-action="delete">Delete</button>`,
+        render: (_data, type, row) => {
+          if (type !== 'display') return '';
+          const role = String(row?.roleName || '').trim().toLowerCase();
+          const isSupervisor = SUPERVISOR_ROLE_KEYS.has(role);
+          const isSenior = SENIOR_SUPERVISOR_ROLE_KEYS.has(role);
+          const canCoverage =
+            (isSupervisor && canManageSupervisorStaff) ||
+            (isSenior && canManageSeniorStaff);
+          const hasCoverage = coverageByAbsentId.has(Number(row.id));
+          const leaveChip = hasCoverage
+            ? `<span class="status-pill status-pill--leave">On leave</span> `
+            : '';
+          let staffBtns = '';
+          if (canCoverage) {
+            staffBtns = hasCoverage
+              ? `<button type="button" class="btn-table" data-action="coverage-end">End coverage</button>`
+              : `<button type="button" class="btn-table" data-action="coverage-start">Leave coverage</button>`;
+            staffBtns += `<button type="button" class="btn-table" data-action="handoff">Handoff</button>`;
+          }
+          return `${leaveChip}${staffBtns}
+           <button type="button" class="btn-table" data-action="edit">Edit</button>
+           <button type="button" class="btn-table btn-table-danger" data-action="delete">Delete</button>`;
+        },
       },
     ],
-    []
+    [canManageSupervisorStaff, canManageSeniorStaff, coverageByAbsentId]
   );
 
   const deletedUserColumns = useMemo(
@@ -544,6 +701,25 @@ function UsersPage() {
         duplicateDeleted={duplicateDeleted}
         onRestoreDuplicate={handleRestoreDuplicate}
         onViewDeletedUsers={goToDeletedUsers}
+      />
+
+      <StaffCoverageModal
+        open={Boolean(coverageUser)}
+        absentUser={coverageUser}
+        users={allUsers}
+        isSaving={isSavingCoverage}
+        onClose={() => setCoverageUser(null)}
+        onSave={handleCreateStaffCoverage}
+      />
+
+      <StaffHandoffModal
+        open={Boolean(handoffUser)}
+        fromUser={handoffUser}
+        users={allUsers}
+        succession={handoffSuccession}
+        isSaving={isSavingHandoff}
+        onClose={() => setHandoffUser(null)}
+        onSave={handleStaffHandoff}
       />
     </div>
   );

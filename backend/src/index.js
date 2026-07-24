@@ -39,6 +39,7 @@ app.use('/api/system-config', systemConfigRouter);
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/access', accessControlRouter);
 app.use('/api/users', require('./routes/users'));
+app.use('/api/staff', require('./routes/staff'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/reports', require('./routes/reports'));
 app.use('/api/audit', require('./routes/audit'));
@@ -91,6 +92,13 @@ async function start() {
     await startLivePaymentsCron();
   } catch (error) {
     console.error('Failed to start live payments cron:', error.message);
+  }
+
+  try {
+    const { startCoverageCron } = require('./services/agentCoverageCronService');
+    await startCoverageCron();
+  } catch (error) {
+    console.error('Failed to start coverage cron:', error.message);
   }
 
   app.listen(PORT, () => {

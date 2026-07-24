@@ -105,6 +105,25 @@ async function getSeniorSupervisorDashboard({ regionId = null } = {}) {
     assignmentParams
   );
 
+  let activeStaffCoverages = 0;
+  try {
+    const { countActiveStaffCoverages } = require('./staffCoverageService');
+    activeStaffCoverages = await countActiveStaffCoverages({
+      user: regionId != null ? { isSystemAdmin: false, regionId, roleName: 'Regional Manager' } : { isSystemAdmin: true },
+    });
+  } catch {
+    activeStaffCoverages = 0;
+  }
+
+  let centersWithoutSupervisor = 0;
+  try {
+    centersWithoutSupervisor = centerRowsFixed.filter(
+      (r) => Number(r.supervisor_count) === 0 && String(r.status) === 'active'
+    ).length;
+  } catch {
+    centersWithoutSupervisor = 0;
+  }
+
   return {
     variant: regionId != null ? 'regional_manager' : 'senior_supervisor',
     regionId: regionId != null ? Number(regionId) : null,
@@ -115,6 +134,8 @@ async function getSeniorSupervisorDashboard({ regionId = null } = {}) {
       supervisors: Number(supervisors?.cnt) || 0,
       agents: Number(agents?.cnt) || 0,
       unboundAgents: Number(unboundAgents?.cnt) || 0,
+      activeStaffCoverages,
+      centersWithoutSupervisor,
     },
     callCenters: centerRowsFixed.map((r) => ({
       id: r.id,
@@ -135,6 +156,7 @@ async function getSeniorSupervisorDashboard({ regionId = null } = {}) {
 }
 
 async function getSupervisorDashboard(user) {
+  const { countActiveCoverages } = require('./agentCoverageService');
   const callCenterId = user?.callCenterId != null ? Number(user.callCenterId) : null;
   if (!callCenterId) {
     return {
@@ -148,6 +170,7 @@ async function getSupervisorDashboard(user) {
         assignedCases: 0,
         outstanding: 0,
         collected: 0,
+        activeCoverages: 0,
       },
       newBatches: [],
       agents: [],
@@ -212,7 +235,9 @@ async function getSupervisorDashboard(user) {
   const [agentRows] = await pool.query(
     `SELECT u.id, u.name, u.email,
             (SELECT COUNT(*) FROM debtors d
-              WHERE d.assigned_agent = u.name AND d.deleted_at IS NULL) AS cases_assigned
+              WHERE (d.assigned_agent_user_id = u.id
+                     OR (d.assigned_agent_user_id IS NULL AND d.assigned_agent = u.name))
+                AND d.deleted_at IS NULL AND d.is_closed = 0) AS cases_assigned
      FROM users u
      JOIN roles r ON r.id = u.role_id
      WHERE u.deleted_at IS NULL AND u.is_active = 1 AND u.call_center_id = ? AND r.name IN (?)
@@ -220,6 +245,8 @@ async function getSupervisorDashboard(user) {
      LIMIT 20`,
     [callCenterId, AGENT_ROLE_NAMES]
   );
+
+  const activeCoverages = await countActiveCoverages({ user });
 
   return {
     variant: 'supervisor',
@@ -234,6 +261,7 @@ async function getSupervisorDashboard(user) {
       assignedCases: Number(portfolio?.assigned_cases) || 0,
       outstanding: Number(portfolio?.outstanding) || 0,
       collected: Number(portfolio?.collected) || 0,
+      activeCoverages,
     },
     newBatches: batchRows.map((r) => ({
       fileId: r.id,

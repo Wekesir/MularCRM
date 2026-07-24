@@ -1206,6 +1206,139 @@ async function initDatabase() {
   await initDebtConfigTables();
   await initAgentTables();
   await initCommissionTables();
+  await initAgentCoverageAndAssignmentTables();
+  await initStaffCoverageAndHandoffTables();
+}
+
+/**
+ * Supervisor / Senior Supervisor leave coverage and succession handoff.
+ */
+async function initStaffCoverageAndHandoffTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS staff_coverages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      absent_user_id INT NOT NULL,
+      covering_user_id INT NOT NULL,
+      scope_type ENUM('call_center','company') NOT NULL DEFAULT 'call_center',
+      call_center_id INT NULL,
+      role_bucket ENUM('supervisor','senior_supervisor') NOT NULL DEFAULT 'supervisor',
+      reason ENUM('leave','sick','training','other') NOT NULL DEFAULT 'leave',
+      starts_at DATETIME NOT NULL,
+      ends_at DATETIME NULL,
+      status ENUM('scheduled','active','ended','cancelled') NOT NULL DEFAULT 'scheduled',
+      notes TEXT NULL,
+      created_by INT NULL,
+      ended_by INT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      ended_at TIMESTAMP NULL,
+      INDEX idx_staff_coverages_absent (absent_user_id, status),
+      INDEX idx_staff_coverages_covering (covering_user_id, status),
+      INDEX idx_staff_coverages_center (call_center_id, status),
+      INDEX idx_staff_coverages_window (starts_at, ends_at),
+      CONSTRAINT fk_staff_coverages_absent
+        FOREIGN KEY (absent_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_staff_coverages_covering
+        FOREIGN KEY (covering_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS staff_handoffs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      from_user_id INT NOT NULL,
+      to_user_id INT NULL,
+      role_bucket ENUM('supervisor','senior_supervisor') NOT NULL,
+      scope_type ENUM('call_center','company') NOT NULL DEFAULT 'call_center',
+      call_center_id INT NULL,
+      mode ENUM('succeed','release') NOT NULL DEFAULT 'succeed',
+      created_by INT NULL,
+      payload JSON NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_staff_handoffs_from (from_user_id),
+      CONSTRAINT fk_staff_handoffs_from
+        FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+}
+
+/**
+ * User-id based assignment + leave coverage / portfolio handoff tables.
+ */
+async function initAgentCoverageAndAssignmentTables() {
+  await addColumnIfNotExists(
+    'debtors',
+    'assigned_agent_user_id',
+    'INT NULL DEFAULT NULL'
+  );
+  await addIndexIfNotExists(
+    'debtors',
+    'idx_debtors_assigned_agent_user',
+    'assigned_agent_user_id'
+  );
+
+  // Backfill user ids from legacy name stamps (best-effort; duplicate names skip).
+  try {
+    await pool.query(`
+      UPDATE debtors d
+      INNER JOIN (
+        SELECT name, MIN(id) AS user_id
+        FROM users
+        WHERE deleted_at IS NULL
+        GROUP BY name
+        HAVING COUNT(*) = 1
+      ) u ON u.name = d.assigned_agent
+      SET d.assigned_agent_user_id = u.user_id
+      WHERE d.assigned_agent IS NOT NULL
+        AND d.assigned_agent <> ''
+        AND d.assigned_agent_user_id IS NULL
+    `);
+  } catch (error) {
+    console.warn('[db] assigned_agent_user_id backfill:', error.message);
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_coverages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      absent_agent_user_id INT NOT NULL,
+      covering_agent_user_id INT NOT NULL,
+      call_center_id INT NULL,
+      reason ENUM('leave','sick','training','other') NOT NULL DEFAULT 'leave',
+      starts_at DATETIME NOT NULL,
+      ends_at DATETIME NULL,
+      status ENUM('scheduled','active','ended','cancelled') NOT NULL DEFAULT 'scheduled',
+      notes TEXT NULL,
+      created_by INT NULL,
+      ended_by INT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      ended_at TIMESTAMP NULL,
+      INDEX idx_agent_coverages_absent (absent_agent_user_id, status),
+      INDEX idx_agent_coverages_covering (covering_agent_user_id, status),
+      INDEX idx_agent_coverages_window (starts_at, ends_at),
+      CONSTRAINT fk_agent_coverages_absent
+        FOREIGN KEY (absent_agent_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_agent_coverages_covering
+        FOREIGN KEY (covering_agent_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_portfolio_handoffs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      from_agent_user_id INT NOT NULL,
+      to_agent_user_id INT NULL,
+      mode ENUM('transfer','unassign') NOT NULL,
+      debtor_count INT NOT NULL DEFAULT 0,
+      file_count INT NOT NULL DEFAULT 0,
+      created_by INT NULL,
+      payload JSON NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_handoffs_from (from_agent_user_id),
+      CONSTRAINT fk_handoffs_from
+        FOREIGN KEY (from_agent_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
 }
 
 // Agent skill lookups (experience levels, expertise areas) + per-agent profile
@@ -1948,4 +2081,6 @@ module.exports = {
   initDebtConfigTables,
   initAgentTables,
   initCommissionTables,
+  initAgentCoverageAndAssignmentTables,
+  initStaffCoverageAndHandoffTables,
 };

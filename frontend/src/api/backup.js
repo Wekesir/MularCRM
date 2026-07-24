@@ -26,3 +26,8 @@ export async function disconnectBackupGoogle() {
   const { data } = await api.post('/api/backup/google/disconnect');
   return data;
 }
+
+export async function clearPendingBackup() {
+  const { data } = await api.post('/api/backup/pending/clear');
+  return data;
+}
